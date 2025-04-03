@@ -11,7 +11,11 @@ const Widget: React.FC = () => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartOffset, setDragStartOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isOrdering, setIsOrdering] = useState<boolean>(false);
   const [showOrderButton, setShowOrderButton] = useState<boolean>(false);
+  const [canPlaceOrder, setCanPlaceOrder] = useState<boolean>(false);
+  const [orderableItem, setOrderableItem] = useState<string | null>(null);
+  const [orderableQuantity, setOrderableQuantity] = useState<number>(0);
   const widgetRef = useRef<HTMLDivElement>(null);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -53,51 +57,117 @@ const Widget: React.FC = () => {
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const sendRequest = async () => {
-    if (!userEmail) {
-      setResponse("Veuillez entrer votre email pour continuer.");
-      return;
-    }
-    if (!/\S+@\S+\.\S+/.test(userEmail)) {
-      setResponse("Veuillez entrer un format d'email valide.");
-      return;
-    }
-
     setIsLoading(true);
     setResponse('');
     setShowOrderButton(false);
+    setCanPlaceOrder(false);
+    setOrderableItem(null);
+    setOrderableQuantity(0);
+
     try {
-      const url = `https://api.livrerjardiner.fr/chat?input=${encodeURIComponent(input)}&user_email=${encodeURIComponent(userEmail)}&delivery_method=${encodeURIComponent(deliveryMethod)}`;
-      console.log('Envoi de la requête à :', url);
+      const params = new URLSearchParams();
+      params.append('input', input);
+      params.append('delivery_method', deliveryMethod);
+
+      const baseUrl = 'https://api.livrerjardiner.fr/chat';
+      const url = `${baseUrl}?${params.toString()}`;
+
+      console.log('Envoi de la requête /chat à :', url);
       const res = await fetch(url, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!res.ok) throw new Error(`Erreur HTTP : ${res.status} ${res.statusText}`);
-      const data = await res.json();
-      console.log('Réponse reçue :', data);
-      const message = data.message || 'Réponse invalide ou vide.';
-      setResponse(message);
 
-      if (message.toLowerCase().includes('rosiers')) {
+      if (!res.ok) {
+          const errorData = await res.json().catch(() => ({ message: `Erreur HTTP : ${res.status} ${res.statusText}` }));
+          throw new Error(errorData.message || `Erreur HTTP : ${res.status} ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      console.log('Réponse /chat reçue :', data);
+
+      setResponse(data.message || 'Réponse invalide ou vide.');
+      setCanPlaceOrder(data.can_order || false);
+      setOrderableItem(data.item || null);
+      setOrderableQuantity(data.quantity || 0);
+
+      if (data.can_order) {
         setShowOrderButton(true);
       }
 
     } catch (error) {
-      console.error('Erreur lors de la requête API:', error);
+      console.error('Erreur lors de la requête /chat API:', error);
       if (error instanceof Error) {
         setResponse(`Erreur de communication : ${error.message}`);
       } else {
         setResponse('Erreur de communication inconnue.');
       }
+      setShowOrderButton(false);
+      setCanPlaceOrder(false);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleOrderClick = () => {
-    console.log('Clic sur Commander !');
-    alert('Commande en cours de développement !');
-    setShowOrderButton(false);
+  const handleOrderClick = async () => {
+    if (!userEmail) {
+      setResponse("Veuillez entrer votre email avant de commander.");
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(userEmail)) {
+      setResponse("Format d'email invalide. Veuillez corriger avant de commander.");
+      return;
+    }
+
+    if (!orderableItem || orderableQuantity <= 0) {
+        setResponse("Impossible de passer la commande, détails manquants. Veuillez reposer votre question.");
+        return;
+    }
+
+    setIsOrdering(true);
+    setResponse('');
+
+    try {
+        const orderData = {
+            user_email: userEmail,
+            item: orderableItem,
+            quantity: orderableQuantity,
+            delivery_method: deliveryMethod,
+        };
+
+        const orderUrl = 'https://api.livrerjardiner.fr/order';
+        console.log('Envoi de la requête /order à :', orderUrl, 'avec data:', orderData);
+
+        const res = await fetch(orderUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(orderData),
+        });
+
+        const resultData = await res.json();
+
+        if (!res.ok) {
+            console.error('Erreur réponse /order:', resultData);
+            throw new Error(resultData.detail || resultData.message || `Erreur lors de la commande: ${res.status}`);
+        }
+
+        console.log('Réponse /order reçue :', resultData);
+        setResponse(resultData.message || 'Commande traitée avec succès !');
+        setShowOrderButton(false);
+        setCanPlaceOrder(false);
+
+    } catch (error) {
+        console.error('Erreur lors de la requête /order API:', error);
+        if (error instanceof Error) {
+            setResponse(`Erreur lors de la commande : ${error.message}`);
+        } else {
+            setResponse('Erreur inconnue lors de la commande.');
+        }
+    } finally {
+        setIsOrdering(false);
+    }
   };
 
   return (
@@ -148,22 +218,23 @@ const Widget: React.FC = () => {
         <button
           onClick={sendRequest}
           className="widget-button widget-button-send"
+          disabled={isLoading || isOrdering}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          Envoyer
+          {isLoading ? 'Chargement...' : 'Envoyer'}
         </button>
         <div
-          className={`widget-response-area ${isLoading ? 'is-loading' : ''}`}
+          className={`widget-response-area ${(isLoading || isOrdering) ? 'is-loading' : ''}`}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             display: 'flex',
             justifyContent: 'center',
-            alignItems: isLoading ? 'center' : 'flex-start',
+            alignItems: (isLoading || isOrdering) ? 'center' : 'flex-start',
             minHeight: '60px',
             maxHeight: '180px',
           }}
         >
-          {isLoading ? (
+          {(isLoading || isOrdering) ? (
             <div className="typing-indicator">
               <span></span>
               <span></span>
@@ -180,9 +251,10 @@ const Widget: React.FC = () => {
           <button
             onClick={handleOrderClick}
             className="widget-button widget-button-order"
+            disabled={isOrdering || isLoading}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            Commander
+            {isOrdering ? 'Envoi...' : 'Commander'}
           </button>
         )}
       </div>
