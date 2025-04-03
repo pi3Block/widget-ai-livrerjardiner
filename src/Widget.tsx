@@ -5,6 +5,8 @@ import './Widget.css';
 const Widget: React.FC = () => {
   const [input, setInput] = useState<string>('');
   const [response, setResponse] = useState<string>('');
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [deliveryMethod, setDeliveryMethod] = useState<string>('livraison');
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 100, y: 100 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartOffset, setDragStartOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
@@ -51,11 +53,20 @@ const Widget: React.FC = () => {
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const sendRequest = async () => {
+    if (!userEmail) {
+      setResponse("Veuillez entrer votre email pour continuer.");
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(userEmail)) {
+      setResponse("Veuillez entrer un format d'email valide.");
+      return;
+    }
+
     setIsLoading(true);
     setResponse('');
     setShowOrderButton(false);
     try {
-      const url = `https://api.livrerjardiner.fr/chat?input=${encodeURIComponent(input)}`;
+      const url = `https://api.livrerjardiner.fr/chat?input=${encodeURIComponent(input)}&user_email=${encodeURIComponent(userEmail)}&delivery_method=${encodeURIComponent(deliveryMethod)}`;
       console.log('Envoi de la requête à :', url);
       const res = await fetch(url, {
         method: 'GET',
@@ -116,6 +127,24 @@ const Widget: React.FC = () => {
           placeholder="Ex. : Je veux 10 rosiers"
           onMouseDown={(e) => e.stopPropagation()}
         />
+        <input
+          type="email"
+          className="widget-input"
+          value={userEmail}
+          onChange={(e) => setUserEmail(e.target.value)}
+          placeholder="Votre email *"
+          required
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+        <select
+          className="widget-input widget-select"
+          value={deliveryMethod}
+          onChange={(e) => setDeliveryMethod(e.target.value)}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <option value="livraison">Mode : Livraison</option>
+          <option value="retrait">Mode : Retrait</option>
+        </select>
         <button
           onClick={sendRequest}
           className="widget-button widget-button-send"
