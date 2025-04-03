@@ -198,30 +198,6 @@ const Widget: React.FC = () => {
           onMouseDown={(e) => e.stopPropagation()}
         />
 
-        {/* Afficher l'email et la livraison seulement si on peut commander */}
-        {showOrderButton && (
-          <>
-            <input
-              type="email"
-              className="widget-input"
-              value={userEmail}
-              onChange={(e) => setUserEmail(e.target.value)}
-              placeholder="Votre email *"
-              required
-              onMouseDown={(e) => e.stopPropagation()}
-            />
-            <select
-              className="widget-input widget-select"
-              value={deliveryMethod}
-              onChange={(e) => setDeliveryMethod(e.target.value)}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <option value="livraison">Mode : Livraison</option>
-              <option value="retrait">Mode : Retrait</option>
-            </select>
-          </>
-        )}
-
         <button
           onClick={sendRequest}
           className="widget-button widget-button-send"
@@ -254,15 +230,39 @@ const Widget: React.FC = () => {
           )}
         </div>
 
+        {/* Afficher Email, Livraison ET Bouton Commander seulement si commande possible */}
         {showOrderButton && (
-          <button
-            onClick={handleOrderClick}
-            className="widget-button widget-button-order"
-            disabled={isOrdering || isLoading}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {isOrdering ? 'Envoi...' : 'Commander'}
-          </button>
+          <>
+            {/* Champs Email et Livraison (Déplacés ici) */}
+            <input
+              type="email"
+              className="widget-input"
+              value={userEmail}
+              onChange={(e) => setUserEmail(e.target.value)}
+              placeholder="Votre email *"
+              required
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+            <select
+              className="widget-input widget-select"
+              value={deliveryMethod}
+              onChange={(e) => setDeliveryMethod(e.target.value)}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <option value="livraison">Mode : Livraison</option>
+              <option value="retrait">Mode : Retrait</option>
+            </select>
+
+            {/* Bouton Commander (Maintenant dans le même bloc conditionnel) */}
+            <button
+              onClick={handleOrderClick}
+              className="widget-button widget-button-order"
+              disabled={isOrdering || isLoading}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {isOrdering ? 'Envoi...' : 'Commander'}
+            </button>
+          </>
         )}
       </div>
     </div>
