@@ -2,6 +2,8 @@
   "name": "widget-ai-livrerjardiner",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "main": "dist/livrerjardiner-widget.umd.js",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
@@ -17,11 +19,15 @@
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
   },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.2.5"
+  },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "start": "vite start",
+    "build": "vite build",
+    "test": "vite test",
+    "eject": "vite eject"
   },
   "eslintConfig": {
     "extends": [
