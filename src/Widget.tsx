@@ -7,6 +7,7 @@ const Widget: React.FC = () => {
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 100, y: 100 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartOffset, setDragStartOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const widgetRef = useRef<HTMLDivElement>(null);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -48,6 +49,8 @@ const Widget: React.FC = () => {
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const sendRequest = async () => {
+    setIsLoading(true);
+    setResponse('');
     try {
       const url = `https://api.livrerjardiner.fr/chat?input=${encodeURIComponent(input)}`;
       console.log('Envoi de la requête à :', url);
@@ -66,6 +69,8 @@ const Widget: React.FC = () => {
       } else {
         setResponse('Erreur de communication inconnue.');
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -122,9 +127,16 @@ const Widget: React.FC = () => {
             borderRadius: '4px',
             fontSize: '0.9em',
             lineHeight: '1.4',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
           }}
         >
-          {response || 'Posez votre question...'}
+          {isLoading ? (
+            <div className="loader"></div>
+          ) : (
+            response || 'Posez votre question...'
+          )}
         </div>
       </div>
     </div>

@@ -11,3 +11,28 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Styles pour le spinner */
+.loader {
+  border: 4px solid #f3f3f3; /* Gris clair */
+  border-top: 4px solid #5a9a1f; /* Vert LivrerJardiner (à ajuster si besoin) */
+  border-radius: 50%;
+  width: 24px;  /* Taille du spinner */
+  height: 24px; /* Taille du spinner */
+  animation: spin 1s linear infinite;
+  margin: 5px; /* Un peu d'espace */
+}
+
+/* Animation de rotation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Optionnel: Styles pour le conteneur si besoin (déjà fait avec flexbox inline) */
+/* .loading-spinner-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+} */
