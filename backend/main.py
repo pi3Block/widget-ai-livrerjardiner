@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from typing import Optional
 from pydantic import BaseModel, EmailStr
 import time
+from fastapi.concurrency import run_in_threadpool
 
 # Configurer le logging
 logging.basicConfig(level=logging.DEBUG)
@@ -95,16 +96,13 @@ class SMTPHostinger:
 
     def send(self, recipient: str, sender: str, subject: str, message: str):
         """
-        Sends an email to the specified recipient
+        Sends an email to the specified recipient.
+        Assumes 'message' is a fully formatted email string (e.g., from msg.as_string()).
+        The subject parameter is ignored here as it should be part of the message string.
         """
-        raw = MIMEText(message)
-        raw["Subject"] = subject
-        raw["From"] = sender
-        raw["To"] = recipient
-
         if self.conn:
             try:
-                self.conn.sendmail(sender, recipient, raw.as_string())
+                self.conn.sendmail(sender, recipient, message)
                 logger.debug(f"Email envoyé à {recipient}")
                 return True
             except Exception as e:
@@ -119,9 +117,17 @@ class SMTPHostinger:
         Closes the SMTP connection
         """
         if self.conn:
-            self.conn.quit()
-            self.conn = None
-            logger.debug("Connexion SMTP fermée")
+            try:
+                self.conn.quit()
+                logger.debug("Connexion SMTP fermée proprement via quit()")
+            except smtplib.SMTPServerDisconnected:
+                logger.warning("Tentative de fermeture (quit) sur une connexion SMTP déjà déconnectée.")
+            except Exception as e:
+                logger.error(f"Erreur inattendue lors de la fermeture SMTP (quit) : {str(e)}")
+            finally:
+                self.conn = None # Assurer que self.conn est None après tentative de fermeture
+        else:
+             logger.debug("Aucune connexion SMTP active à fermer.")
 
 # Initialiser le client SMTP Hostinger
 smtp_client = SMTPHostinger()
@@ -313,13 +319,14 @@ async def chat(input: str, delivery_method: str = "livraison", user_email: Optio
     }
 
     try:
-        # Étape 2 : Vérifier le stock
-        stock = check_stock(item)
+        # Étape 2 : Vérifier le stock (maintenant dans un thread séparé)
+        stock = await run_in_threadpool(check_stock, item)
         logger.info(f"Stock vérifié : stock={stock}")
         is_enough = "Oui" if stock >= quantity else "Non"
 
-        # Générer la réponse conversationnelle du LLM
-        response = chain.invoke({
+        # Générer la réponse conversationnelle du LLM (pourrait aussi être mis dans threadpool)
+        # Pour l'instant, on laisse comme ça pour se concentrer sur check_stock
+        response = await run_in_threadpool(chain.invoke, {
             "input": input,
             "stock": stock,
             "quantity": quantity,
@@ -371,12 +378,12 @@ async def create_order(order_data: OrderRequest):
 
     try:
         # Optionnel : Re-vérifier le stock ici pour être sûr
-        stock = check_stock(item)
+        stock = await run_in_threadpool(check_stock, item)
         logger.info(f"Stock vérifié pour la commande : stock={stock}")
 
         # --- LOGIQUE DE COMMANDE/DEVIS/EMAIL DÉPLACÉE ICI ---
         # Étape 1 : Créer un devis
-        quote_id = save_quote(user_email, item, quantity)
+        quote_id = await run_in_threadpool(save_quote, user_email, item, quantity)
         logger.info(f"Devis créé : quote_id={quote_id}")
         pdf_path = f"quotes/quote_{quote_id}.pdf" # Obtenir le chemin après sauvegarde
 
@@ -384,17 +391,17 @@ async def create_order(order_data: OrderRequest):
 
         # Étape 2 : Si pas en stock, préparer une commande en attente
         if stock < quantity:
-            save_pending_order(user_email, item, quantity)
+            await run_in_threadpool(save_pending_order, user_email, item, quantity)
             response_message = f"Devis #{quote_id} créé. Le stock étant insuffisant, nous avons mis votre commande en attente. Vous recevrez le devis par email."
             logger.info("Commande en attente enregistrée pour /order")
         # Étape 3 : Si en stock, préparer la commande et la livraison/retrait
         else:
-            save_order(user_email, item, quantity, delivery_method)
+            await run_in_threadpool(save_order, user_email, item, quantity, delivery_method)
             response_message = f"Devis #{quote_id} créé. Votre commande est prête pour {delivery_method}. Vous recevrez le devis par email pour validation."
             logger.info(f"Commande confirmée pour /order : delivery_method={delivery_method}")
 
         # Étape 4 : Envoyer le devis par email
-        email_sent = send_quote_email(user_email, quote_id, pdf_path)
+        email_sent = await run_in_threadpool(send_quote_email, user_email, quote_id, pdf_path)
         if not email_sent:
             response_message += " (Note : l'envoi de l'email de devis a échoué.)"
         logger.info(f"Email de devis envoyé à {user_email} pour /order: {email_sent}")
