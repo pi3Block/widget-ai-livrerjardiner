@@ -9,6 +9,7 @@ const Widget: React.FC = () => {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartOffset, setDragStartOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showOrderButton, setShowOrderButton] = useState<boolean>(false);
   const widgetRef = useRef<HTMLDivElement>(null);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -52,6 +53,7 @@ const Widget: React.FC = () => {
   const sendRequest = async () => {
     setIsLoading(true);
     setResponse('');
+    setShowOrderButton(false);
     try {
       const url = `https://api.livrerjardiner.fr/chat?input=${encodeURIComponent(input)}`;
       console.log('Envoi de la requête à :', url);
@@ -62,7 +64,13 @@ const Widget: React.FC = () => {
       if (!res.ok) throw new Error(`Erreur HTTP : ${res.status} ${res.statusText}`);
       const data = await res.json();
       console.log('Réponse reçue :', data);
-      setResponse(data.message || 'Réponse invalide ou vide.');
+      const message = data.message || 'Réponse invalide ou vide.';
+      setResponse(message);
+
+      if (message.toLowerCase().includes('rosiers')) {
+        setShowOrderButton(true);
+      }
+
     } catch (error) {
       console.error('Erreur lors de la requête API:', error);
       if (error instanceof Error) {
@@ -75,70 +83,79 @@ const Widget: React.FC = () => {
     }
   };
 
+  const handleOrderClick = () => {
+    console.log('Clic sur Commander !');
+    alert('Commande en cours de développement !');
+    setShowOrderButton(false);
+  };
+
   return (
     <div
       ref={widgetRef}
+      className="widget-container"
       style={{
         position: 'fixed',
         left: `${position.x}px`,
         top: `${position.y}px`,
         width: '300px',
-        padding: '0',
-        backgroundColor: '#f0f0f0',
-        border: '1px solid #ccc',
-        borderRadius: '5px',
         cursor: isDragging ? 'grabbing' : 'grab',
         userSelect: 'none',
         zIndex: 9999,
-        boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
-        display: 'flex',
-        flexDirection: 'column',
       }}
       onMouseDown={handleMouseDown}
     >
-      <div style={{ padding: '8px 10px', backgroundColor: '#ddd', textAlign: 'center', cursor: 'move', borderTopLeftRadius: '5px', borderTopRightRadius: '5px' }}>
+      <div className="widget-header">
         Chatbot LivrerJardiner
       </div>
-      <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div className="widget-content">
         <input
           type="text"
+          className="widget-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ex. : Je veux 10 rosiers"
           onMouseDown={(e) => e.stopPropagation()}
-          style={{ padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '3px' }}
         />
         <button
           onClick={sendRequest}
+          className="widget-button widget-button-send"
           onMouseDown={(e) => e.stopPropagation()}
-          style={{ padding: '10px', boxSizing: 'border-box', cursor: 'pointer', border: 'none', backgroundColor: '#007bff', color: 'white', borderRadius: '3px' }}
         >
           Envoyer
         </button>
         <div
+          className={`widget-response-area ${isLoading ? 'is-loading' : ''}`}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            wordWrap: 'break-word',
-            minHeight: '140px',
-            maxHeight: '250px',
-            overflowY: 'auto',
-            backgroundColor: '#e9e9e9',
-            padding: '15px',
-            border: '1px solid #d0d0d0',
-            borderRadius: '4px',
-            fontSize: '0.9em',
-            lineHeight: '1.4',
             display: 'flex',
             justifyContent: 'center',
             alignItems: isLoading ? 'center' : 'flex-start',
+            minHeight: '60px',
+            maxHeight: '180px',
           }}
         >
           {isLoading ? (
-            <div className="loader"></div>
+            <div className="typing-indicator">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
           ) : (
-            response || 'Posez votre question...'
+            <span className="response-content">
+              {response || 'Posez votre question...'}
+            </span>
           )}
         </div>
+
+        {showOrderButton && (
+          <button
+            onClick={handleOrderClick}
+            className="widget-button widget-button-order"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            Commander
+          </button>
+        )}
       </div>
     </div>
   );

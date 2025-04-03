@@ -36,3 +36,164 @@ code {
   align-items: center;
   height: 100%;
 } */
+
+/* Animation de "typing" */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center; /* Assure que les points sont centrés si le conteneur est large */
+  padding: 10px 0; /* Un peu d'espace vertical */
+}
+
+.typing-indicator span {
+  height: 8px;
+  width: 8px;
+  background-color: #5a9a1f; /* Vert (ajuster si besoin) */
+  border-radius: 50%;
+  display: inline-block;
+  margin: 0 3px; /* Espace entre les points */
+  animation: blink 1.4s infinite both;
+}
+
+/* Animation de clignotement avec délai */
+.typing-indicator span:nth-child(1) {
+  animation-delay: 0s;
+}
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Keyframes pour l'animation */
+@keyframes blink {
+  0% {
+    opacity: 0.2;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+/* Supprimer l'ancien loader si présent */
+/* .loader {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #5a9a1f;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+  margin: 5px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+} */
+
+/* Styles généraux du widget */
+.widget-container { /* Ajoutez cette classe au div principal dans Widget.tsx */
+  background-color: #f8f9fa; /* Fond principal légèrement blanc cassé */
+  border-radius: 10px;      /* Coins arrondis */
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.15); /* Ombre plus douce */
+  border: none; /* Supprimer la bordure grise initiale */
+  /* Garder position: fixed, width, z-index etc depuis les styles inline si besoin */
+}
+
+/* Header */
+.widget-header { /* Ajoutez cette classe au div du header */
+  background-color: #5a9a1f; /* Vert principal */
+  color: white;
+  padding: 10px 15px;
+  border-top-left-radius: 10px; /* Arrondi seulement en haut */
+  border-top-right-radius: 10px;
+  text-align: center;
+  font-weight: bold;
+  cursor: move;
+}
+
+/* Zone de contenu (input, boutons, réponse) */
+.widget-content { /* Ajoutez cette classe au div qui contient input/boutons/réponse */
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px; /* Espace entre éléments */
+}
+
+/* Champ Input */
+.widget-input { /* Ajoutez cette classe à l'input */
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background-color: white;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease; /* Transition douce */
+}
+.widget-input:focus {
+  outline: none;
+  border-color: #5a9a1f; /* Bordure verte au focus */
+  box-shadow: 0 0 0 2px rgba(90, 154, 31, 0.2); /* Léger halo vert */
+}
+
+/* Boutons */
+.widget-button { /* Classe commune pour les boutons */
+  padding: 10px 15px;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s ease, transform 0.1s ease; /* Transition douce */
+}
+.widget-button:hover {
+  filter: brightness(90%); /* Assombrir légèrement au survol */
+}
+.widget-button:active {
+  transform: scale(0.98); /* Légère réduction à l'appui */
+}
+
+.widget-button-send { /* Classe pour le bouton Envoyer */
+  background-color: #5a9a1f; /* Vert */
+  /* Ou garder le bleu: background-color: #007bff; */
+}
+
+.widget-button-order { /* Classe pour le bouton Commander */
+  background-color: #28a745; /* Vert plus franc */
+  margin-top: 5px;
+}
+
+/* Zone de Réponse */
+.widget-response-area { /* Ajoutez cette classe au div de la réponse */
+  background-color: white;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 60px; /* Ajuster au besoin */
+  max-height: 180px;
+  overflow-y: auto;
+  color: #333;
+  line-height: 1.5;
+  transition: opacity 0.3s ease-in-out; /* Transition pour le fondu */
+  opacity: 1; /* Opacité par défaut */
+}
+.widget-response-area.is-loading { /* Classe à ajouter quand isLoading=true */
+   display: flex;
+   justify-content: center;
+   align-items: center;
+}
+.widget-response-area .response-content { /* Un div autour du texte de réponse */
+   opacity: 1;
+   transition: opacity 0.3s ease-in-out 0.1s; /* Fade-in du texte */
+}
+.widget-response-area .response-content.hidden {
+    opacity: 0;
+}
+
+
+/* Indicateur de Typing (déjà stylé, vérifier les couleurs) */
+.typing-indicator span {
+  background-color: #5a9a1f; /* S'assurer que c'est la bonne couleur */
+}
