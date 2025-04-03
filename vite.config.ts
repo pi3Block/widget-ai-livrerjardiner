@@ -4,6 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  base: '/widget-ai-livrerjardiner/',
   build: {
     lib: {
       entry: path.resolve(__dirname, 'src/widget-entry.jsx'),
