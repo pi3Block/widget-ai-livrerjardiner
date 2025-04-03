@@ -197,31 +197,38 @@ const Widget: React.FC = () => {
           placeholder="Ex. : Je veux 10 rosiers"
           onMouseDown={(e) => e.stopPropagation()}
         />
-        <input
-          type="email"
-          className="widget-input"
-          value={userEmail}
-          onChange={(e) => setUserEmail(e.target.value)}
-          placeholder="Votre email *"
-          required
-          onMouseDown={(e) => e.stopPropagation()}
-        />
-        <select
-          className="widget-input widget-select"
-          value={deliveryMethod}
-          onChange={(e) => setDeliveryMethod(e.target.value)}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <option value="livraison">Mode : Livraison</option>
-          <option value="retrait">Mode : Retrait</option>
-        </select>
+
+        {/* Afficher l'email et la livraison seulement si on peut commander */}
+        {showOrderButton && (
+          <>
+            <input
+              type="email"
+              className="widget-input"
+              value={userEmail}
+              onChange={(e) => setUserEmail(e.target.value)}
+              placeholder="Votre email *"
+              required
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+            <select
+              className="widget-input widget-select"
+              value={deliveryMethod}
+              onChange={(e) => setDeliveryMethod(e.target.value)}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <option value="livraison">Mode : Livraison</option>
+              <option value="retrait">Mode : Retrait</option>
+            </select>
+          </>
+        )}
+
         <button
           onClick={sendRequest}
           className="widget-button widget-button-send"
           disabled={isLoading || isOrdering}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {isLoading ? 'Chargement...' : 'Envoyer'}
+          {isLoading ? 'Chargement...' : 'Posez votre question...'}
         </button>
         <div
           className={`widget-response-area ${(isLoading || isOrdering) ? 'is-loading' : ''}`}
@@ -230,8 +237,8 @@ const Widget: React.FC = () => {
             display: 'flex',
             justifyContent: 'center',
             alignItems: (isLoading || isOrdering) ? 'center' : 'flex-start',
-            minHeight: '60px',
-            maxHeight: '180px',
+            minHeight: '160px',
+            maxHeight: '280px',
           }}
         >
           {(isLoading || isOrdering) ? (

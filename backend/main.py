@@ -102,7 +102,9 @@ class SMTPHostinger:
         """
         if self.conn:
             try:
-                self.conn.sendmail(sender, recipient, message)
+                # Envoyer directement la chaîne 'message' formatée
+                # Assurer que le destinataire est une liste
+                self.conn.sendmail(sender, [recipient], message)
                 logger.debug(f"Email envoyé à {recipient}")
                 return True
             except Exception as e:

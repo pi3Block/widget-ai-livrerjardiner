@@ -171,8 +171,8 @@ code {
   border: 1px solid #eee;
   border-radius: 6px;
   padding: 12px;
-  min-height: 60px; /* Ajuster au besoin */
-  max-height: 180px;
+  min-height: 160px; /* Ajuster au besoin */
+  max-height: 280px;
   overflow-y: auto;
   color: #333;
   line-height: 1.5;
