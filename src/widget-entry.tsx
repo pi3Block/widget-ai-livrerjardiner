@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import Widget from './Widget'; // Votre composant principal
 
 // Fonction pour initialiser le widget
-function initialiserWidget(containerId) {
+function initialiserWidget(containerId: string) {
   let container = document.getElementById(containerId);
 
   // Si le conteneur n'existe pas, on peut le créer dynamiquement
@@ -23,6 +23,15 @@ function initialiserWidget(containerId) {
       <Widget />
     </React.StrictMode>
   );
+}
+
+// Déclarer le type globalement pour TypeScript
+declare global {
+  interface Window {
+    MonWidgetReact?: { // Le point d'interrogation indique que la propriété peut ne pas toujours exister
+      initialiser: (containerId: string) => void;
+    };
+  }
 }
 
 // Exposer la fonction globalement pour qu'elle soit appelable depuis l'extérieur

@@ -1,6 +1,5 @@
 // src/Widget.tsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { createRoot } from 'react-dom/client';
 
 const Widget: React.FC = () => {
   const [input, setInput] = useState<string>('');
