@@ -1,5 +1,6 @@
 // src/Widget.tsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import './Widget.css';
 
 const Widget: React.FC = () => {
   const [input, setInput] = useState<string>('');
@@ -118,18 +119,18 @@ const Widget: React.FC = () => {
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             wordWrap: 'break-word',
-            minHeight: '40px',
-            maxHeight: '150px',
+            minHeight: '140px',
+            maxHeight: '250px',
             overflowY: 'auto',
             backgroundColor: '#e9e9e9',
-            padding: '8px',
+            padding: '15px',
             border: '1px solid #d0d0d0',
             borderRadius: '4px',
             fontSize: '0.9em',
             lineHeight: '1.4',
             display: 'flex',
             justifyContent: 'center',
-            alignItems: 'center',
+            alignItems: isLoading ? 'center' : 'flex-start',
           }}
         >
           {isLoading ? (
