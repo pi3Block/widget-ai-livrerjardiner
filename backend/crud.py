@@ -7,8 +7,11 @@ from fastapi import HTTPException
 import random
 from typing import Optional, List, Dict, Any, Tuple
 from decimal import Decimal
-from passlib.context import CryptContext # Ajout pour le hachage de mot de passe
-# --- Supprimer imports PDF --- 
+# Supprimer l'import de passlib
+# from passlib.context import CryptContext # Ajout pour le hachage de mot de passe
+# Importer bcrypt
+import bcrypt
+# --- Supprimer imports PDF ---
 # import os
 # from datetime import datetime
 # from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
@@ -17,9 +20,9 @@ from passlib.context import CryptContext # Ajout pour le hachage de mot de passe
 # from reportlab.lib.pagesizes import letter
 # from reportlab.lib import colors
 
-# --- Importer la configuration DB --- 
+# --- Importer la configuration DB ---
 import config
-# --- Importer la fonction PDF depuis pdf_utils --- 
+# --- Importer la fonction PDF depuis pdf_utils ---
 # (Sera utilisé plus tard pour les devis/factures)
 # from pdf_utils import generate_quote_pdf
 # --- Importer les modèles Pydantic V3 ---
@@ -27,7 +30,10 @@ import models
 
 logger = logging.getLogger(__name__)
 
-# --- Initialisation du Pool de Connexions DB --- 
+# Supprimer l'initialisation de CryptContext
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# --- Initialisation du Pool de Connexions DB ---
 DB_POOL = None
 try:
     if not config.POSTGRES_PASSWORD:
@@ -641,21 +647,126 @@ def list_products_with_variants(
     finally:
         _release_db_conn(conn)
 
+def count_products_with_variants(
+    category_id: Optional[int] = None, 
+    tag_names: Optional[List[str]] = None, 
+    search_term: Optional[str] = None
+) -> int:
+    """Compte le nombre total de produits uniques correspondant aux filtres."""
+    logger.debug(f"[CRUD] Comptage produits: cat={category_id}, tags={tag_names}, search={search_term}")
+    conn = None
+    try:
+        conn = _get_db_conn()
+        
+        # Construire la requête COUNT basée sur les mêmes filtres que list_products_with_variants
+        base_query = "SELECT COUNT(DISTINCT p.id) FROM products p"
+        joins = []
+        conditions = []
+        params = []
+
+        # Filtre par catégorie
+        if category_id is not None:
+            conditions.append("p.category_id = %s")
+            params.append(category_id)
+
+        # Filtre par tags (besoin des joins pour filtrer sur les tags des variations)
+        if tag_names:
+            # Assurer que la jointure nécessaire est présente
+            if "LEFT JOIN product_variants pv ON p.id = pv.product_id" not in joins:
+                 joins.append("LEFT JOIN product_variants pv ON p.id = pv.product_id")
+            if "LEFT JOIN product_variant_tags pvt ON pv.id = pvt.product_variant_id" not in joins:
+                 joins.append("LEFT JOIN product_variant_tags pvt ON pv.id = pvt.product_variant_id")
+            if "LEFT JOIN tags t ON pvt.tag_id = t.id" not in joins:
+                 joins.append("LEFT JOIN tags t ON pvt.tag_id = t.id")
+            
+            conditions.append("t.name = ANY(%s)")
+            params.append(tag_names)
+            # Note: Comme pour la liste, cela compte les produits ayant AU MOINS un des tags.
+            # Pour compter les produits ayant TOUS les tags, la requête serait plus complexe.
+
+        # Filtre par terme de recherche (peut nécessiter join sur variants si on cherche sur SKU)
+        if search_term:
+             if "LEFT JOIN product_variants pv ON p.id = pv.product_id" not in joins:
+                 joins.append("LEFT JOIN product_variants pv ON p.id = pv.product_id")
+             
+             search_pattern = f"%{search_term}%"
+             # Correction: Utiliser des triples guillemets pour la chaîne multi-lignes
+             conditions.append("""(
+                 p.name ILIKE %s OR 
+                 pv.sku ILIKE %s OR 
+                 p.base_description ILIKE %s
+             )""")
+             params.extend([search_pattern, search_pattern, search_pattern])
+
+        # Assembler la requête
+        query = base_query
+        if joins:
+            query += " " + " ".join(joins)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+            
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(params))
+            result = cur.fetchone()
+            total_count = result[0] if result else 0
+            logger.debug(f"[CRUD] Total produits comptés: {total_count}")
+            return total_count
+
+    except Exception as e:
+        _handle_db_error(e, conn, rollback=False)
+        return 0 # Retourner 0 en cas d'erreur de comptage
+    finally:
+        _release_db_conn(conn)
+
 # --- CRUD: Users & Authentication ---
 
-# Configuration Passlib
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Vérifie un mot de passe en clair contre un hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Vérifie un mot de passe en clair contre un hachage stocké en utilisant bcrypt."""
+    logger.debug("[AUTH_VERIF] Tentative de vérification de mot de passe.")
+    try:
+        # Assurer que les deux sont en bytes et que le hachage est correctement formaté
+        plain_password_bytes = plain_password.encode('utf-8')
+        hashed_password_bytes = hashed_password.encode('utf-8')
+        # logger.debug(f"[AUTH_VERIF] Hash lu depuis la DB (encodé): {hashed_password_bytes}") # Redondant avec le suivant
+        # logger.debug(f"[AUTH_VERIF] Mot de passe reçu du formulaire (encodé): {plain_password_bytes}") # Redondant avec le suivant
+
+        # === NOUVEAU LOG AVANT ===
+        # Utiliser repr() pour une meilleure visibilité des caractères potentiellement cachés
+        logger.debug(f"[AUTH_VERIF] Appel bcrypt.checkpw avec plain={repr(plain_password_bytes)} (type: {type(plain_password_bytes)}) et hashed={repr(hashed_password_bytes)} (type: {type(hashed_password_bytes)})")
+        # === FIN NOUVEAU LOG AVANT ===
+
+        result = bcrypt.checkpw(plain_password_bytes, hashed_password_bytes)
+
+        # === NOUVEAU LOG APRES ===
+        logger.debug(f"[AUTH_VERIF] Résultat de bcrypt.checkpw: {result}")
+        # === FIN NOUVEAU LOG APRES ===
+
+        return result
+    except ValueError as e:
+        # Cette exception peut être levée si le hash n'est pas valide pour bcrypt
+        logger.error(f"[AUTH_VERIF] Erreur lors de la vérification du mot de passe (probablement hash invalide): {e}")
+        return False
 
 def get_password_hash(password: str) -> str:
-    """Génère le hash d'un mot de passe."""
-    return pwd_context.hash(password)
+    """Génère un hachage de mot de passe en utilisant bcrypt."""
+    logger.debug("[AUTH_HASH] Génération d'un nouveau hachage de mot de passe.")
+    try:
+        password_bytes = password.encode('utf-8')
+        # Génère le salt et hache le mot de passe
+        hashed_bytes = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+        # Retourne le hachage en tant que string UTF-8
+        hashed_str = hashed_bytes.decode('utf-8')
+        logger.debug("[AUTH_HASH] Hachage généré avec succès.")
+        return hashed_str
+    except Exception as e:
+        logger.error(f"[AUTH_HASH] Erreur lors de la génération du hachage: {e}", exc_info=True)
+        # Lever une exception ici pourrait être plus sûr, mais pour l'instant on retourne une chaîne vide
+        # ou on pourrait lever une HTTPException si c'est dans un contexte web.
+        # Pour l'instant, on lève une exception générique pour signaler le problème.
+        raise ValueError("Impossible de générer le hachage du mot de passe.") from e
 
 def get_user_by_email(conn, email: str) -> Optional[models.User]:
-    """Récupère un utilisateur par son email (utilise connexion existante)."""
+    """Récupère un utilisateur par son email."""
     # Note : Ne retourne pas le hash du mot de passe
     try:
         with conn.cursor() as cur:
@@ -714,6 +825,9 @@ def get_user_by_id(user_id: int) -> Optional[models.User]:
 def create_user(user: models.UserCreate) -> models.User:
     """Crée un nouvel utilisateur."""
     logger.debug(f"[CRUD] Création utilisateur: {user.email}")
+    # === AJOUTER LOG ===
+    logger.debug(f"[CRUD] Mot de passe reçu pour hachage: '{user.password}' (type: {type(user.password)})")
+    # === FIN AJOUT ===
     hashed_password = get_password_hash(user.password)
     conn = None
     try:
@@ -766,8 +880,13 @@ def authenticate_user(email: str, password: str) -> Optional[models.User]:
             
             user_id, db_email, db_hashed_password, db_name, db_created_at, db_updated_at = result
             
+            # ----- AJOUTER CES LOGS -----
+            logger.debug(f"[AUTH_VERIF] Hash lu depuis la DB: {db_hashed_password}")
+            logger.debug(f"[AUTH_VERIF] Mot de passe reçu du formulaire: '{password}'") 
+            # -----------------------------
+
             # Vérifier le mot de passe
-            if not verify_password(password, db_hashed_password):
+            if not verify_password(password, db_hashed_password): 
                 logger.warning(f"[AUTH] Mot de passe incorrect pour: {email}")
                 return None # Mot de passe incorrect
 

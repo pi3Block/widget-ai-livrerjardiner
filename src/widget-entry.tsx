@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import Widget from './Widget'; // Votre composant principal
+import Widget from './widget/Widget'; // Votre composant principal
 
 // Fonction pour initialiser le widget
 function initialiserWidget(containerId: string) {

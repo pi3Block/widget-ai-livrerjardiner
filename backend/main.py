@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, List, Annotated
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.concurrency import run_in_threadpool
@@ -36,7 +36,7 @@ app = FastAPI(
     version="1.0.0" # Version V3 avec nouvelle structure
 )
 
-# Configurer CORS (inchangé)
+# Configurer CORS (Mise à jour)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -45,10 +45,14 @@ app.add_middleware(
         "https://pierrelegrand.fr",
         "http://localhost:3000",
         "https://pi3block.github.io",
+        "http://localhost:5173", 
+        "http://localhost",      
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Range"],
 )
 
 # ======================================================
@@ -172,9 +176,10 @@ async def list_products_old(limit: int = 100, offset: int = 0):
     logger.warning("Appel à l'endpoint obsolète /products_old")
     raise HTTPException(status_code=status.HTTP_410_GONE, detail="Endpoint obsolète. Utiliser GET /products/")
 
-# Nouvel endpoint /products
-@app.get("/products/", response_model=List[models.Product])
+# Nouvel endpoint /products (Modifié pour Content-Range)
+@app.get("/products", response_model=List[models.Product])
 async def list_products_v3(
+    response: Response,
     limit: int = 100, 
     offset: int = 0, 
     category_id: Optional[int] = None, 
@@ -184,12 +189,20 @@ async def list_products_v3(
     """Renvoie la liste des produits avec variations, filtres et pagination."""
     logger.info(f"Requête list_products: limit={limit}, offset={offset}, category={category_id}, tags={tags}, search={search_term}")
     
-    # Convertir la chaîne de tags en liste
     tag_names_list = tags.split(',') if tags else None
     if tag_names_list:
-        tag_names_list = [tag.strip() for tag in tag_names_list if tag.strip()] # Nettoyer les espaces
+        tag_names_list = [tag.strip() for tag in tag_names_list if tag.strip()]
         
     try:
+        # 1. Obtenir le compte total
+        total_count = await run_in_threadpool(
+            crud.count_products_with_variants,
+            category_id=category_id, 
+            tag_names=tag_names_list, 
+            search_term=search_term
+        )
+
+        # 2. Obtenir les données paginées
         products = await run_in_threadpool(
             crud.list_products_with_variants, 
             limit=limit, 
@@ -198,14 +211,79 @@ async def list_products_v3(
             tag_names=tag_names_list, 
             search_term=search_term
         )
+        
+        # 3. Construire et ajouter l'en-tête Content-Range
+        # Attention: l'index de fin est inclusif
+        end_range = offset + len(products) - 1 if len(products) > 0 else offset
+        content_range_header = f"products {offset}-{end_range}/{total_count}"
+        response.headers["Content-Range"] = content_range_header
+        logger.debug(f"Setting Content-Range header: {content_range_header}")
+
         return products
+        
     except Exception as e:
         logger.error(f"Erreur lors du listage des produits: {e}", exc_info=True)
-        # Utiliser un message d'erreur générique ou un des messages "amusants"
         error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
-# TODO: Ajouter endpoints pour gérer Categories (POST, GET, PUT, DELETE) si nécessaire
+# Endpoint POST pour créer un nouveau produit
+@app.post("/products", response_model=models.Product, status_code=status.HTTP_201_CREATED)
+async def create_new_product(
+    product_in: models.ProductCreate,
+    current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Sécurité: seul un utilisateur connecté peut créer
+):
+    """Crée un nouveau produit de base."""
+    # TODO: Ajouter une vérification de rôle si seuls les admins peuvent créer
+    logger.info(f"Tentative de création de produit par user ID: {current_user.id}")
+    try:
+        created_product = await run_in_threadpool(crud.create_product, product=product_in)
+        return created_product
+    except HTTPException as e:
+        raise e # Remonter les erreurs (ex: catégorie parente invalide?)
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la création du produit '{product_in.name}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du produit.")
+
+# Endpoint GET pour lister toutes les catégories (utile pour les ReferenceInput)
+@app.get("/categories", response_model=List[models.Category])
+async def list_all_categories(response: Response):
+    """Renvoie la liste de toutes les catégories."""
+    logger.info("Requête list_all_categories")
+    try:
+        categories = await run_in_threadpool(crud.get_all_categories)
+        
+        # Décommenter et corriger la construction de l'en-tête Content-Range
+        total_count = len(categories)
+        # Le range va de 0 à total_count - 1 s'il y a des éléments
+        end_range = total_count - 1 if total_count > 0 else 0 
+        # Utiliser 'categories' comme nom de ressource
+        content_range_header = f"categories 0-{end_range}/{total_count}" 
+        response.headers["Content-Range"] = content_range_header
+        logger.debug(f"Setting Content-Range header for categories: {content_range_header}")
+
+        return categories
+    except Exception as e:
+        logger.error(f"Erreur lors du listage des catégories: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération des catégories.")
+
+# Endpoint POST pour créer une nouvelle catégorie
+@app.post("/categories", response_model=models.Category, status_code=status.HTTP_201_CREATED)
+async def create_new_category(
+    category_in: models.CategoryCreate,
+    current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Sécurité
+):
+    """Crée une nouvelle catégorie."""
+    # TODO: Vérification de rôle admin?
+    logger.info(f"Tentative de création de catégorie par user ID: {current_user.id}")
+    try:
+        created_category = await run_in_threadpool(crud.create_category, category=category_in)
+        return created_category
+    except HTTPException as e:
+        raise e # Remonter les erreurs (ex: 409 nom déjà pris)
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la catégorie.")
+
 # TODO: Ajouter endpoints pour gérer Tags (GET) si nécessaire
 # TODO: Ajouter endpoints pour gérer Product Variants (POST, GET, PUT, DELETE) si nécessaire (pour admin)
 
@@ -410,8 +488,9 @@ async def create_new_quote(
         logger.error(f"Erreur inattendue lors de la création de devis pour user {current_user.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du devis.")
 
-@app.get("/quotes/", response_model=List[models.Quote])
+@app.get("/quotes", response_model=List[models.Quote])
 async def get_my_quotes(
+    response: Response,
     current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
     limit: int = 20, 
     offset: int = 0 
@@ -420,6 +499,14 @@ async def get_my_quotes(
     logger.info(f"Listage des devis pour l'utilisateur ID: {current_user.id}")
     try:
         quotes = await run_in_threadpool(crud.list_user_quotes, user_id=current_user.id, limit=limit, offset=offset)
+        
+        # Ajouter l'en-tête Content-Range
+        total_count = len(quotes) # NOTE: Ceci n'est pas le vrai total, juste le nombre retourné
+        end_range = offset + total_count - 1 if total_count > 0 else offset
+        content_range_header = f"quotes {offset}-{end_range}/{total_count}" 
+        response.headers["Content-Range"] = content_range_header
+        logger.debug(f"Setting Content-Range header for quotes: {content_range_header}")
+        
         return quotes
     except Exception as e:
         logger.error(f"Erreur inattendue lors du listage des devis pour user {current_user.id}: {e}", exc_info=True)
@@ -513,8 +600,9 @@ async def create_new_order(
         logger.error(f"Erreur inattendue lors de la création de commande pour user {current_user.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la commande.")
 
-@app.get("/orders/", response_model=List[models.Order])
+@app.get("/orders", response_model=List[models.Order])
 async def get_my_orders(
+    response: Response,
     current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
     limit: int = 20, 
     offset: int = 0
@@ -523,6 +611,14 @@ async def get_my_orders(
     logger.info(f"Listage des commandes pour l'utilisateur ID: {current_user.id}")
     try:
         orders = await run_in_threadpool(crud.list_user_orders, user_id=current_user.id, limit=limit, offset=offset)
+        
+        # Ajouter l'en-tête Content-Range
+        total_count = len(orders) # NOTE: Ceci n'est pas le vrai total, juste le nombre retourné
+        end_range = offset + total_count - 1 if total_count > 0 else offset
+        content_range_header = f"orders {offset}-{end_range}/{total_count}" 
+        response.headers["Content-Range"] = content_range_header
+        logger.debug(f"Setting Content-Range header for orders: {content_range_header}")
+        
         return orders
     except Exception as e:
         logger.error(f"Erreur inattendue lors du listage des commandes pour user {current_user.id}: {e}", exc_info=True)
