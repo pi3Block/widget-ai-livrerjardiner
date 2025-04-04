@@ -34,8 +34,9 @@ const Widget: React.FC = () => {
       setTimeout(() => {
         if (widgetRef.current) {
           const widgetRect = widgetRef.current.getBoundingClientRect();
-          const widgetWidth = widgetRect.width;
-          const widgetHeight = widgetRect.height; // Utiliser getBoundingClientRect qui est plus fiable que offsetHeight après des changements CSS complexes
+          // Utiliser la largeur cible pour le calcul X, pas la largeur mesurée pendant la transition
+          const targetWidth = 300; // <- Largeur cible quand déplié
+          const widgetHeight = widgetRect.height; // La hauteur est 'auto', on doit la mesurer
           const windowWidth = window.innerWidth;
           const windowHeight = window.innerHeight;
           const currentX = position.x;
@@ -44,18 +45,18 @@ const Widget: React.FC = () => {
 
           // Log temporaire pour débogage
           console.log('[Widget] toggleExpand Adjust Check:', {
-              currentX, currentY, widgetWidth, widgetHeight, windowWidth, windowHeight
+              currentX, currentY, targetWidth, widgetHeight, windowWidth, windowHeight
           });
 
           let newX = currentX;
           let newY = currentY;
 
-          // Ajustement X (gauche)
-          const rightEdge = currentX + widgetWidth;
+          // Ajustement X (gauche) - Utilisation de targetWidth
+          const rightEdge = currentX + targetWidth; 
           const rightLimit = windowWidth - margin;
           if (rightEdge > rightLimit) {
             // Calcul: Positionner le bord droit du widget à `rightLimit`
-            newX = rightLimit - widgetWidth; // Equivalent à windowWidth - margin - widgetWidth
+            newX = rightLimit - targetWidth; // Equivalent à windowWidth - margin - targetWidth
             console.log(`[Widget] Adjusting X: rightEdge (${rightEdge.toFixed(0)}) > rightLimit (${rightLimit.toFixed(0)}). New X calculated: ${newX.toFixed(0)}`);
           }
           // Empêcher de déborder à gauche
