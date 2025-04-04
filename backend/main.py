@@ -412,8 +412,9 @@ async def create_new_quote(
 
 @app.get("/quotes/", response_model=List[models.Quote])
 async def get_my_quotes(
-    limit: int = 20, offset: int = 0, 
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
+    limit: int = 20, 
+    offset: int = 0 
 ):
     """Liste les devis (en-têtes) de l'utilisateur authentifié."""
     logger.info(f"Listage des devis pour l'utilisateur ID: {current_user.id}")
@@ -514,8 +515,9 @@ async def create_new_order(
 
 @app.get("/orders/", response_model=List[models.Order])
 async def get_my_orders(
-    limit: int = 20, offset: int = 0,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
+    limit: int = 20, 
+    offset: int = 0
 ):
     """Liste les commandes (en-têtes) de l'utilisateur authentifié."""
     logger.info(f"Listage des commandes pour l'utilisateur ID: {current_user.id}")

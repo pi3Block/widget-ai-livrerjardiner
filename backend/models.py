@@ -3,10 +3,11 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime
 from decimal import Decimal # Pour les prix
 
-# Configuration commune pour activer ORM mode
+# Configuration commune pour activer ORM mode (renommé en from_attributes)
 class OrmBaseModel(BaseModel):
     class Config:
-        orm_mode = True
+        # orm_mode = True
+        from_attributes = True # Remplacer orm_mode
 
 # ======================================================
 # Models: Users & Addresses

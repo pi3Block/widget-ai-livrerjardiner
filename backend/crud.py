@@ -529,11 +529,12 @@ def list_products_with_variants(
         # Filtre par terme de recherche
         if search_term:
             search_pattern = f"%{search_term}%"
-            conditions.append("(
+            # Utiliser des triple guillemets pour la chaîne multi-lignes
+            conditions.append("""(
                 p.name ILIKE %s OR 
                 pv.sku ILIKE %s OR 
                 p.base_description ILIKE %s
-            )")
+            )""")
             params.extend([search_pattern, search_pattern, search_pattern])
 
         # Assembler la requête
