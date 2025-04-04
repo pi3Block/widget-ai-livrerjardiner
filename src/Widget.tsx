@@ -42,29 +42,45 @@ const Widget: React.FC = () => {
           const currentY = position.y;
           const margin = 20; // Marge commune pour droite et bas
 
+          // Log temporaire pour débogage
+          console.log('[Widget] toggleExpand Adjust Check:', {
+              currentX, currentY, widgetWidth, widgetHeight, windowWidth, windowHeight
+          });
+
           let newX = currentX;
           let newY = currentY;
 
           // Ajustement X (gauche)
-          if (currentX + widgetWidth > windowWidth - margin) {
-            newX = windowWidth - widgetWidth - margin;
+          const rightEdge = currentX + widgetWidth;
+          const rightLimit = windowWidth - margin;
+          if (rightEdge > rightLimit) {
+            // Calcul: Positionner le bord droit du widget à `rightLimit`
+            newX = rightLimit - widgetWidth; // Equivalent à windowWidth - margin - widgetWidth
+            console.log(`[Widget] Adjusting X: rightEdge (${rightEdge.toFixed(0)}) > rightLimit (${rightLimit.toFixed(0)}). New X calculated: ${newX.toFixed(0)}`);
           }
           // Empêcher de déborder à gauche
-          newX = Math.max(margin, newX); 
+          newX = Math.max(margin, newX);
 
           // Ajustement Y (haut)
-          if (currentY + widgetHeight > windowHeight - margin) {
-            newY = windowHeight - widgetHeight - margin;
+          const bottomEdge = currentY + widgetHeight;
+          const bottomLimit = windowHeight - margin;
+          if (bottomEdge > bottomLimit) {
+             // Calcul: Positionner le bord bas du widget à `bottomLimit`
+            newY = bottomLimit - widgetHeight; // Equivalent à windowHeight - margin - widgetHeight
+             console.log(`[Widget] Adjusting Y: bottomEdge (${bottomEdge.toFixed(0)}) > bottomLimit (${bottomLimit.toFixed(0)}). New Y calculated: ${newY.toFixed(0)}`);
           }
           // Empêcher de déborder en haut
           newY = Math.max(margin, newY);
 
           // Mettre à jour la position seulement si elle a changé
           if (newX !== currentX || newY !== currentY) {
+             console.log(`[Widget] Updating position from (${currentX.toFixed(0)}, ${currentY.toFixed(0)}) to (${newX.toFixed(0)}, ${newY.toFixed(0)})`);
              setPosition({ x: newX, y: newY });
+          } else {
+              console.log('[Widget] No position update needed.');
           }
         }
-      }, 50); // Petit délai pour la mise à jour du DOM/CSS
+      }, 100); // <-- Délai augmenté à 100ms
     }
   };
 
