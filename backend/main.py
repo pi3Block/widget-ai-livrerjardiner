@@ -1,12 +1,14 @@
 import logging
 from typing import Optional, List, Annotated
-from fastapi import FastAPI, HTTPException, Depends, status, Response
+from fastapi import FastAPI, HTTPException, Depends, status, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.concurrency import run_in_threadpool
 import json
 import random
 from pydantic import BaseModel
+from langchain_core.prompts import PromptTemplate
+from jose import JWTError, jwt
 
 # --- Importer la configuration --- 
 import config
@@ -26,6 +28,9 @@ from services import send_quote_email
 # --- Importer les utilitaires d'authentification ---
 import auth # Imports create_access_token, get_current_active_user, Token
 
+# --- Importer la dépendance de session DB ---
+from database import get_db_session, AsyncSession # Importer AsyncSession pour l'annotation
+
 # Configurer le logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -33,7 +38,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="LivrerJardiner API",
     description="API pour la gestion des produits, commandes, utilisateurs et interactions IA.",
-    version="1.0.0" # Version V3 avec nouvelle structure
+    version="1.1.0" # Version avec SQLAlchemy + FastCRUD
 )
 
 # Configurer CORS (Mise à jour)
@@ -60,48 +65,57 @@ app.add_middleware(
 # ======================================================
 
 @app.post("/auth/token", response_model=auth.Token)
-async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
+):
     """Fournit un token JWT pour un utilisateur authentifié."""
     logger.info(f"Tentative de login pour l'utilisateur: {form_data.username}")
-    # authenticate_user attend email et password
-    user = await run_in_threadpool(crud.authenticate_user, email=form_data.username, password=form_data.password)
-    if not user:
+    # Utiliser la nouvelle fonction crud.authenticate_user (async)
+    # Elle retourne UserDB ou None
+    user_db = await crud.authenticate_user(db=db, email=form_data.username, password=form_data.password)
+    if not user_db:
         logger.warning(f"Échec de l'authentification pour: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email ou mot de passe incorrect",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Le "subject" du token est l'ID utilisateur
-    access_token = auth.create_access_token(data={"sub": str(user.id)})
-    logger.info(f"Token créé pour l'utilisateur: {form_data.username} (ID: {user.id})")
+
+    # Le subject du token est l'ID utilisateur
+    access_token = auth.create_access_token(data={"sub": str(user_db.id)})
+    logger.info(f"Token créé pour l'utilisateur: {form_data.username} (ID: {user_db.id})")
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/users/", response_model=models.User, status_code=status.HTTP_201_CREATED)
-async def register_user(user_in: models.UserCreate):
+async def register_user(
+    user_in: models.UserCreate,
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
+):
     """Enregistre un nouvel utilisateur."""
     logger.info(f"Tentative d'enregistrement pour l'email: {user_in.email}")
     try:
-        # La fonction CRUD gère déjà la vérification de l'email existant et le hashage
-        created_user = await run_in_threadpool(crud.create_user, user=user_in)
-        return created_user
+        # Utiliser la nouvelle fonction crud.create_user (async)
+        created_user_db = await crud.create_user(db=db, user_in=user_in)
+        # Mapper l'objet UserDB vers le schéma Pydantic User pour la réponse
+        # Assure que models.User a Config.from_attributes = True
+        return models.User.model_validate(created_user_db)
     except HTTPException as e:
-        # Remonter les erreurs spécifiques (ex: 409 Conflict si email existe)
-        raise e 
+        # Les erreurs spécifiques (ex: 409 Conflict) sont levées par crud.create_user
+        raise e
     except Exception as e:
         logger.error(f"Erreur inattendue lors de l'enregistrement de l'utilisateur {user_in.email}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de l'utilisateur.")
 
 @app.get("/users/me", response_model=models.User)
-async def read_users_me(current_user: Annotated[models.User, Depends(auth.get_current_active_user)]):
+async def read_users_me(
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
+):
     """Retourne les informations de l'utilisateur actuellement authentifié."""
-    logger.info(f"Récupération des informations pour l'utilisateur ID: {current_user.id}")
-    # La dépendance get_current_active_user a déjà récupéré et validé l'utilisateur
-    # On pourrait vouloir rafraîchir les données ici si nécessaire (ex: re-récupérer les adresses)
-    # user_data = crud.get_user_by_id(current_user.id) 
-    # return user_data if user_data else current_user # Fallback au cas où
-    return current_user
+    logger.info(f"Récupération des informations pour l'utilisateur ID: {current_user_db.id}")
+    # current_user_db contient déjà les infos et potentiellement les relations chargées
+    # Mapper vers le modèle Pydantic pour la réponse
+    return models.User.model_validate(current_user_db)
 
 # ======================================================
 # Endpoints: Adresses Utilisateur
@@ -110,248 +124,309 @@ async def read_users_me(current_user: Annotated[models.User, Depends(auth.get_cu
 @app.post("/users/me/addresses", response_model=models.Address, status_code=status.HTTP_201_CREATED)
 async def add_user_address(
     address_in: models.AddressCreate,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],
+    db: AsyncSession = Depends(get_db_session)
 ):
     """Ajoute une nouvelle adresse pour l'utilisateur authentifié."""
-    logger.info(f"Ajout d'adresse pour l'utilisateur ID: {current_user.id}")
+    logger.info(f"Ajout d'adresse pour l'utilisateur ID: {current_user_db.id}")
     try:
-        # crud.create_user_address gère la logique is_default
-        created_address = await run_in_threadpool(crud.create_user_address, user_id=current_user.id, address=address_in)
-        return created_address
+        created_address_db = await crud.create_user_address(db=db, user_id=current_user_db.id, address_in=address_in)
+        return models.Address.model_validate(created_address_db)
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de l'ajout d'adresse pour user {current_user.id}: {e}", exc_info=True)
+        logger.error(f"Erreur inattendue lors de l'ajout d'adresse pour user {current_user_db.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de l'ajout de l'adresse.")
 
 @app.get("/users/me/addresses", response_model=List[models.Address])
 async def get_my_addresses(
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],
+    db: AsyncSession = Depends(get_db_session)
 ):
     """Liste les adresses de l'utilisateur authentifié."""
-    logger.info(f"Listage des adresses pour l'utilisateur ID: {current_user.id}")
+    logger.info(f"Listage des adresses pour l'utilisateur ID: {current_user_db.id}")
     try:
-        addresses = await run_in_threadpool(crud.get_user_addresses, user_id=current_user.id)
-        return addresses
+        addresses_db = await crud.get_user_addresses(db=db, user_id=current_user_db.id)
+        return [models.Address.model_validate(addr) for addr in addresses_db]
     except Exception as e:
-        logger.error(f"Erreur inattendue lors du listage des adresses pour user {current_user.id}: {e}", exc_info=True)
+        logger.error(f"Erreur inattendue lors du listage des adresses pour user {current_user_db.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération des adresses.")
 
 @app.put("/users/me/addresses/{address_id}/default", status_code=status.HTTP_204_NO_CONTENT)
 async def set_my_default_address(
     address_id: int,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],
+    db: AsyncSession = Depends(get_db_session)
 ):
     """Définit une adresse comme adresse par défaut pour l'utilisateur authentifié."""
-    logger.info(f"Définition de l'adresse par défaut ID: {address_id} pour l'utilisateur ID: {current_user.id}")
+    logger.info(f"Définition de l'adresse par défaut ID: {address_id} pour l'utilisateur ID: {current_user_db.id}")
     try:
-        # crud.set_default_address gère la vérification d'appartenance et la transaction
-        await run_in_threadpool(crud.set_default_address, user_id=current_user.id, address_id_to_set=address_id)
-        return # Retourne 204 No Content en cas de succès
+        await crud.set_default_address(db=db, user_id=current_user_db.id, address_id_to_set=address_id)
     except HTTPException as e:
-        # Remonter les erreurs spécifiques (ex: 404 Not Found si l'adresse n'appartient pas à l'utilisateur)
         raise e
     except Exception as e:
-        logger.error(f"Erreur lors de la définition de l'adresse par défaut {address_id} pour user {current_user.id}: {e}", exc_info=True)
+        logger.error(f"Erreur lors de la définition de l'adresse par défaut {address_id} pour user {current_user_db.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la mise à jour de l'adresse par défaut.")
 
-# TODO: Endpoint PUT /users/me/addresses/{address_id} (utilise crud.update_user_address)
-# @app.put("/users/me/addresses/{address_id}", response_model=models.Address)
-# async def update_my_address(...):
-#     pass
+@app.put("/users/me/addresses/{address_id}", response_model=models.Address)
+async def update_my_address(
+    address_id: int,
+    address_in: models.AddressUpdate, # Utiliser le nouveau modèle Pydantic
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
+):
+    """Met à jour une adresse spécifique de l'utilisateur authentifié."""
+    logger.info(f"Tentative MAJ adresse ID {address_id} pour user ID {current_user_db.id}")
+    updated_address_db = await crud.update_user_address(
+        db=db, 
+        user_id=current_user_db.id, 
+        address_id=address_id, 
+        address_in=address_in
+    )
+    if not updated_address_db:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Address with id {address_id} not found or does not belong to the current user."
+        )
+    # Mapper vers Pydantic pour la réponse
+    return models.Address.model_validate(updated_address_db)
 
-# TODO: Endpoint DELETE /users/me/addresses/{address_id} (utilise crud.delete_user_address)
-# @app.delete("/users/me/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT)
-# async def delete_my_address(...):
-#     pass
+@app.delete("/users/me/addresses/{address_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_address(
+    address_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
+):
+    """Supprime une adresse spécifique de l'utilisateur authentifié."""
+    logger.info(f"Tentative suppression adresse ID {address_id} pour user ID {current_user_db.id}")
+    try:
+        deleted = await crud.delete_user_address(db=db, user_id=current_user_db.id, address_id=address_id)
+        # La fonction crud lève des exceptions 404 ou 400 si la suppression échoue/est invalide
+        # Si elle retourne True, la suppression a réussi.
+        # Pas de contenu à retourner (FastAPI gère le 204)
+    except HTTPException as e:
+        raise e # Remonter les erreurs 404 ou 400 de crud.delete_user_address
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la suppression de l'adresse {address_id} pour user {current_user_db.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la suppression de l'adresse.")
 
 # ======================================================
 # Endpoints: Produits, Catégories, Tags
 # ======================================================
 
-# Ancien endpoint /products - Peut être supprimé plus tard
-@app.get("/products_old", response_model=List[models.Product], deprecated=True)
-async def list_products_old(limit: int = 100, offset: int = 0):
-    """(Obsolète) Renvoie la liste des produits disponibles avec pagination."""
-    logger.warning("Appel à l'endpoint obsolète /products_old")
-    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Endpoint obsolète. Utiliser GET /products/")
-
-# Nouvel endpoint /products (Modifié pour Content-Range)
+# Endpoint pour lister les produits (avec filtres, pagination, Content-Range)
 @app.get("/products", response_model=List[models.Product])
-async def list_products_v3(
+async def list_products(
     response: Response,
-    limit: int = 100, 
-    offset: int = 0, 
-    category_id: Optional[int] = None, 
+    limit: int = 100,
+    offset: int = 0,
+    category_id: Optional[int] = None,
     tags: Optional[str] = None, # Noms de tags séparés par des virgules
-    search_term: Optional[str] = None
+    search_term: Optional[str] = None,
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
 ):
     """Renvoie la liste des produits avec variations, filtres et pagination."""
     logger.info(f"Requête list_products: limit={limit}, offset={offset}, category={category_id}, tags={tags}, search={search_term}")
-    
+
     tag_names_list = tags.split(',') if tags else None
     if tag_names_list:
         tag_names_list = [tag.strip() for tag in tag_names_list if tag.strip()]
-        
+
     try:
-        # 1. Obtenir le compte total
-        total_count = await run_in_threadpool(
-            crud.count_products_with_variants,
-            category_id=category_id, 
-            tag_names=tag_names_list, 
+        # 1. Compter le total avec la nouvelle fonction
+        total_count = await crud.count_products_with_variants(
+            db=db,
+            category_id=category_id,
+            tag_names=tag_names_list,
             search_term=search_term
         )
 
-        # 2. Obtenir les données paginées
-        products = await run_in_threadpool(
-            crud.list_products_with_variants, 
-            limit=limit, 
-            offset=offset, 
-            category_id=category_id, 
-            tag_names=tag_names_list, 
+        # 2. Obtenir les données paginées avec la nouvelle fonction
+        products_db = await crud.list_products_with_variants(
+            db=db,
+            limit=limit,
+            offset=offset,
+            category_id=category_id,
+            tag_names=tag_names_list,
             search_term=search_term
         )
-        
+
         # 3. Construire et ajouter l'en-tête Content-Range
-        # Attention: l'index de fin est inclusif
-        end_range = offset + len(products) - 1 if len(products) > 0 else offset
+        end_range = offset + len(products_db) - 1 if len(products_db) > 0 else offset
         content_range_header = f"products {offset}-{end_range}/{total_count}"
         response.headers["Content-Range"] = content_range_header
         logger.debug(f"Setting Content-Range header: {content_range_header}")
 
-        return products
-        
+        # 4. Mapper les ProductDB vers Product Pydantic pour la réponse
+        return [models.Product.model_validate(p) for p in products_db]
+
     except Exception as e:
         logger.error(f"Erreur lors du listage des produits: {e}", exc_info=True)
-        error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
+        error_message = random.choice(config.FUNNY_ERROR_MESSAGES)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
-
-# Endpoint POST pour créer un nouveau produit
-@app.post("/products", response_model=models.Product, status_code=status.HTTP_201_CREATED)
-async def create_new_product(
-    product_in: models.ProductCreate,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Sécurité: seul un utilisateur connecté peut créer
-):
-    """Crée un nouveau produit de base."""
-    # TODO: Ajouter une vérification de rôle si seuls les admins peuvent créer
-    logger.info(f"Tentative de création de produit par user ID: {current_user.id}")
-    try:
-        created_product = await run_in_threadpool(crud.create_product, product=product_in)
-        return created_product
-    except HTTPException as e:
-        raise e # Remonter les erreurs (ex: catégorie parente invalide?)
-    except Exception as e:
-        logger.error(f"Erreur inattendue lors de la création du produit '{product_in.name}': {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du produit.")
 
 # Endpoint GET pour récupérer un produit spécifique par ID
 @app.get("/products/{product_id}", response_model=models.Product)
 async def read_product(
     product_id: int,
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
     # current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Décommenter si authentification requise
 ):
     """Récupère un produit spécifique par son ID, incluant ses variations."""
     logger.info(f"Requête get_product pour ID: {product_id}")
     try:
-        product = await run_in_threadpool(crud.get_product_by_id, product_id=product_id)
-        if product is None:
+        # Utiliser la fonction refactorisée crud.get_product_by_id
+        product_db = await crud.get_product_by_id(db=db, product_id=product_id)
+        if product_db is None:
             logger.warning(f"Produit ID {product_id} non trouvé.")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produit non trouvé")
-        return product
+        # Mapper ProductDB vers Product Pydantic
+        return models.Product.model_validate(product_db)
     except HTTPException as e:
         raise e # Remonter les erreurs HTTP (comme 404)
     except Exception as e:
         logger.error(f"Erreur lors de la récupération du produit ID {product_id}: {e}", exc_info=True)
-        error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
+        error_message = random.choice(config.FUNNY_ERROR_MESSAGES)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
-# Endpoint GET pour lister toutes les catégories (utile pour les ReferenceInput)
+# Endpoint GET pour lister toutes les catégories
 @app.get("/categories", response_model=List[models.Category])
-async def list_all_categories(response: Response):
+async def list_all_categories(
+    response: Response, # Gardé si on veut ajouter Content-Range plus tard
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
+):
     """Renvoie la liste de toutes les catégories."""
-    logger.info("Requête list_all_categories")
+    logger.info("Requête pour lister toutes les catégories")
     try:
-        categories = await run_in_threadpool(crud.get_all_categories)
-        
-        # Décommenter et corriger la construction de l'en-tête Content-Range
-        total_count = len(categories)
-        # Le range va de 0 à total_count - 1 s'il y a des éléments
-        end_range = total_count - 1 if total_count > 0 else 0 
-        # Utiliser 'categories' comme nom de ressource
-        content_range_header = f"categories 0-{end_range}/{total_count}" 
+        categories_db = await crud.get_all_categories(db=db)
+        # Ajouter Content-Range (même si non paginé ici, peut être utile pour React Admin)
+        total_count = len(categories_db)
+        content_range_header = f"categories 0-{total_count-1 if total_count > 0 else 0}/{total_count}"
         response.headers["Content-Range"] = content_range_header
-        logger.debug(f"Setting Content-Range header for categories: {content_range_header}")
-
-        return categories
+        logger.debug(f"Setting Content-Range header: {content_range_header}")
+        # Mapper vers Pydantic
+        return [models.Category.model_validate(cat) for cat in categories_db]
     except Exception as e:
         logger.error(f"Erreur lors du listage des catégories: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération des catégories.")
-
-# Endpoint POST pour créer une nouvelle catégorie
-@app.post("/categories", response_model=models.Category, status_code=status.HTTP_201_CREATED)
-async def create_new_category(
-    category_in: models.CategoryCreate,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Sécurité
-):
-    """Crée une nouvelle catégorie."""
-    # TODO: Ajouter une vérification de rôle si seuls les admins peuvent créer
-    logger.info(f"Tentative de création de catégorie par user ID: {current_user.id}")
-    try:
-        created_category = await run_in_threadpool(crud.create_category, category=category_in)
-        return created_category
-    except HTTPException as e:
-        raise e # Remonter les erreurs (ex: nom dupliqué?)
-    except Exception as e:
-        logger.error(f"Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la catégorie.")
 
 # Endpoint GET pour récupérer une catégorie spécifique par ID
 @app.get("/categories/{category_id}", response_model=models.Category)
 async def read_category(
     category_id: int,
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
     # current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Décommenter si authentification requise
 ):
     """Récupère une catégorie spécifique par son ID."""
     logger.info(f"Requête get_category pour ID: {category_id}")
     try:
-        category = await run_in_threadpool(crud.get_category, category_id=category_id)
-        if category is None:
+        # Utiliser la fonction crud.get_category refactorisée
+        category_db = await crud.get_category(db=db, category_id=category_id)
+        if category_db is None:
             logger.warning(f"Catégorie ID {category_id} non trouvée.")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie non trouvée")
-        return category
+        # Mapper vers Pydantic
+        return models.Category.model_validate(category_db)
     except HTTPException as e:
         raise e # Remonter les erreurs HTTP (comme 404)
     except Exception as e:
         logger.error(f"Erreur lors de la récupération de la catégorie ID {category_id}: {e}", exc_info=True)
-        error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
+        error_message = random.choice(config.FUNNY_ERROR_MESSAGES)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
-# TODO: Ajouter endpoints pour gérer Tags (GET) si nécessaire
-# TODO: Ajouter endpoints pour gérer Product Variants (POST, GET, PUT, DELETE) si nécessaire (pour admin)
+# Endpoint POST pour créer un nouveau produit (Admin requis)
+@app.post("/products", response_model=models.Product, status_code=status.HTTP_201_CREATED)
+async def create_new_product(
+    product_in: models.ProductCreate,
+    db: AsyncSession = Depends(get_db_session),
+    # Utiliser la dépendance admin
+    current_admin_user: Annotated[models.UserDB, Depends(auth.get_current_admin_user)]
+):
+    """Crée un nouveau produit de base (Admin requis)."""
+    logger.info(f"Tentative de création de produit par admin ID: {current_admin_user.id}")
+    try:
+        created_product_db = await crud.create_product(db=db, product_in=product_in)
+        return models.Product.model_validate(created_product_db)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la création du produit '{product_in.name}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du produit.")
+
+# Endpoint POST pour créer une nouvelle catégorie (Admin requis)
+@app.post("/categories", response_model=models.Category, status_code=status.HTTP_201_CREATED)
+async def create_new_category(
+    category_in: models.CategoryCreate,
+    db: AsyncSession = Depends(get_db_session),
+    # Utiliser la dépendance admin
+    current_admin_user: Annotated[models.UserDB, Depends(auth.get_current_admin_user)]
+):
+    """Crée une nouvelle catégorie (Admin requis)."""
+    logger.info(f"Tentative de création de catégorie par admin ID: {current_admin_user.id}")
+    try:
+        created_category_db = await crud.create_category(db=db, category_in=category_in)
+        return models.Category.model_validate(created_category_db)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la catégorie.")
+
+# Endpoint POST pour créer une nouvelle variation pour un produit existant (Admin requis)
+@app.post("/products/{product_id}/variants", response_model=models.ProductVariant, status_code=status.HTTP_201_CREATED)
+async def create_product_variant_endpoint(
+    product_id: int,
+    variant_in: models.ProductVariantCreate,
+    db: AsyncSession = Depends(get_db_session),
+    # Utiliser la dépendance admin
+    current_admin_user: Annotated[models.UserDB, Depends(auth.get_current_admin_user)]
+):
+    """Crée une nouvelle variation pour un produit existant (Admin requis)."""
+    logger.info(f"Tentative création variation pour produit ID {product_id} par admin {current_admin_user.id}")
+    if variant_in.product_id != product_id:
+        logger.warning(f"Incohérence ID produit: URL={product_id}, Payload={variant_in.product_id}")
+        variant_in.product_id = product_id
+
+    try:
+        created_variant_db = await crud.create_product_variant(db=db, variant_in=variant_in)
+        return models.ProductVariant.model_validate(created_variant_db)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Erreur création variation pour produit {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne création variation.")
 
 # ======================================================
-# Endpoints: Chat V3
+# Endpoints: Chat IA (Refactorisé)
 # ======================================================
 
-# Modèle pour la réponse du chat (simple pour l'instant)
+# Modèles Pydantic pour le Chat (inchangés)
+class ChatRequest(BaseModel):
+    input: str
+    model: Optional[str] = config.DEFAULT_MODEL
+    # Ajoutez d'autres champs si nécessaire (ex: user_id, session_id)
+
 class ChatResponse(BaseModel):
     message: str
-    # On pourrait ajouter des champs pour guider le frontend:
-    # next_action: Optional[str] = None # ex: 'request_address', 'confirm_order'
-    # quote_id: Optional[int] = None
-    # order_id: Optional[int] = None
+    # Ajoutez d'autres champs si nécessaire (ex: debug_info, detected_intent)
 
-@app.get("/chat", response_model=ChatResponse)
-async def chat_v3(
-    input: str,
-    # delivery_method: str = "livraison", # Garder si utile pour le contexte LLM?
-    current_user: Annotated[Optional[models.User], Depends(auth.get_current_user)] = None, # Optionnel
-    selected_model: str = config.DEFAULT_MODEL
+# --- Suppression des anciens endpoints spécifiques (/chat/stock, /chat/general, /chat/parse) --- 
+# Ces logiques sont maintenant intégrées dans le endpoint /chat générique.
+
+@app.post("/chat", response_model=ChatResponse) # Changer en POST pour accepter un corps de requête
+async def chat_endpoint(
+    request: ChatRequest, # Utiliser le modèle de requête
+    db: AsyncSession = Depends(get_db_session), # Injecter la session DB
+    # Utiliser la nouvelle dépendance pour l'utilisateur optionnel
+    current_user_db: Annotated[Optional[models.UserDB], Depends(auth.get_optional_current_active_user)] = None
 ):
-    """Point d'entrée principal pour les interactions via chat."""
+    """Point d'entrée principal pour les interactions via chat (refactorisé)."""
     
-    user_id_for_log = current_user.id if current_user else "Anonyme"
-    logger.info(f"Requête chat V3 reçue : user={user_id_for_log}, model={selected_model}, input='{input}'")
+    user_id_for_log = current_user_db.id if current_user_db else "Anonyme"
+    selected_model = request.model if request.model else config.DEFAULT_MODEL
+    user_input = request.input
+    
+    logger.info(f"Requête chat reçue : user={user_id_for_log}, model={selected_model}, input='{user_input}'")
     
     # Obtenir l'instance LLM
     current_llm = get_llm(selected_model)
@@ -363,12 +438,13 @@ async def chat_v3(
     parsed_data = None
     parsing_error = None
     try:
-        logger.debug("Appel LLM (parsing V3)...")
-        parsing_formatted_prompt = parsing_prompt.format(input=input)
-        parsing_response_raw = await run_in_threadpool(current_llm.invoke, parsing_formatted_prompt)
+        logger.debug("Appel LLM asynchrone (parsing)...")
+        parsing_formatted_prompt = parsing_prompt.format(input=user_input)
+        # Utiliser ainvoke pour l'appel asynchrone
+        parsing_response_raw = await current_llm.ainvoke(parsing_formatted_prompt)
         logger.debug(f"Réponse brute du parsing LLM: {parsing_response_raw}")
 
-        # Nettoyer et parser la réponse JSON
+        # Nettoyer et parser la réponse JSON (inchangé)
         json_str = parsing_response_raw.strip().strip('```json').strip('```').strip()
         parsed_data = json.loads(json_str)
         logger.info(f"Parsing LLM réussi: {parsed_data}")
@@ -380,7 +456,7 @@ async def chat_v3(
         parsing_error = f"Erreur inattendue lors du parsing LLM: {e}"
         logger.error(parsing_error, exc_info=True)
         
-    # Si le parsing échoue, on traite comme info_generale
+    # Gestion de l'échec du parsing (inchangé)
     if parsing_error or not parsed_data or "intent" not in parsed_data:
         logger.warning("Parsing LLM échoué ou invalide, traitement comme info_generale.")
         parsed_data = {"intent": "info_generale", "items": []}
@@ -390,346 +466,402 @@ async def chat_v3(
     items_requested = parsed_data.get("items", [])
     response_message = ""
     final_prompt = general_chat_prompt # Prompt par défaut
-    prompt_input_vars = {"input": input}
+    prompt_input_vars = {"input": user_input}
+    should_call_llm = True # Par défaut, on appelle le LLM à la fin
 
     if intent == "info_generale" or intent == "salutation":
-        # Simple réponse conversationnelle
         logger.debug(f"Intention traitée: {intent}")
-        # Le prompt par défaut (general_chat_prompt) est déjà sélectionné
-        pass 
+        pass # Utilise le prompt général
         
     elif intent == "demande_produits":
         logger.debug(f"Intention traitée: {intent}")
-        processed_items_info = []
         if not items_requested:
-             # L'utilisateur a demandé des produits mais le LLM n'a rien extrait?
              logger.warning("Intention 'demande_produits' mais aucun item extrait.")
              response_message = "Je vois que vous cherchez des informations sur des produits, mais je n'ai pas bien compris lesquels. Pouvez-vous préciser les références (SKU) ou décrire les produits que vous cherchez ?"
-             # Court-circuiter l'appel LLM final car on a déjà la réponse
-             return ChatResponse(message=response_message)
+             should_call_llm = False # Pas besoin d'appeler le LLM, on a la réponse
         else:
-            # Traiter chaque item demandé
             found_items_details = []
             not_found_skus = []
             stock_info_summary = "\nInformations sur les produits demandés:\n"
-            
             for item in items_requested:
                 sku = item.get("sku")
                 quantity = item.get("quantity", 1)
-                
                 if sku:
-                    logger.debug(f"Recherche variation SKU: {sku}")
-                    variant = await run_in_threadpool(crud.get_product_variant_by_sku, sku=sku)
+                    variant = await crud.get_product_variant_by_sku(db=db, sku=sku)
                     if variant:
-                        logger.debug(f"Variation trouvée: {variant.id}, prix: {variant.price}")
-                        stock_level = await run_in_threadpool(crud.get_stock_for_variant, variant_id=variant.id)
-                        is_enough = stock_level >= quantity
-                        found_items_details.append({ # Stocker les détails pour un prompt potentiel
+                        stock_info = await crud.get_stock_for_variant(db=db, variant_id=variant.id)
+                        stock_level = stock_info.quantity if stock_info else 0
+                        found_items_details.append({ 
                             "sku": sku, 
                             "stock": stock_level, 
                             "quantity": quantity, 
-                            "is_enough": is_enough,
+                            "is_enough": stock_level >= quantity,
                             "price": variant.price
                         })
                         stock_info_summary += f"- Réf {sku}: Disponible: {stock_level} unité(s). (Prix: {variant.price:.2f} €)\n"
                     else:
-                        logger.warning(f"SKU {sku} non trouvé dans la base de données.")
                         not_found_skus.append(sku)
                         stock_info_summary += f"- Réf {sku}: Désolé, cette référence est inconnue.\n"
                 else:
-                    # Cas où SKU non trouvé, mais base_product/attributes présents
-                    # TODO: Implémenter la recherche par attributs si nécessaire
-                    logger.warning(f"Item sans SKU détecté, recherche par attributs non implémentée: {item}")
-                    stock_info_summary += f"- Pour '{item.get('base_product', 'produit inconnu')}', veuillez fournir la référence exacte (SKU) ou plus de détails.\n"
-
-            # Préparer le contexte pour le prompt de réponse
-            # Utiliser general_chat_prompt mais ajouter le résumé du stock
+                    stock_info_summary += f"- Pour '{item.get('base_product', 'produit inconnu')}', veuillez fournir la référence exacte (SKU).\n"
+            
             prompt_input_vars["stock_summary"] = stock_info_summary
             final_prompt = PromptTemplate(
                 input_variables=["input", "stock_summary"],
                 template="L'utilisateur demande : {input}.\n{stock_summary}\nRéponds de manière utile et conviviale en te basant sur ces informations, en français uniquement."
             )
-            # Note: On pourrait aussi utiliser stock_prompt si un seul item est demandé et pertinent.
+            # On laisse should_call_llm = True pour générer une réponse basée sur le résumé
             
     elif intent == "creer_devis":
         logger.debug(f"Intention traitée: {intent}")
-        if not current_user:
+        should_call_llm = False # On va générer une réponse directe
+
+        if not current_user_db:
              response_message = "Pour créer un devis, veuillez d'abord vous connecter ou créer un compte."
-             return ChatResponse(message=response_message)
-        if not items_requested:
+        elif not items_requested:
              response_message = "Je peux créer un devis pour vous, mais veuillez d'abord spécifier les produits (avec leur référence SKU) et les quantités souhaitées."
-             return ChatResponse(message=response_message)
-        
-        # TODO: Logique de création de devis (simplifié pour l'instant)
-        # 1. Valider items (existence SKU, etc.)
-        # 2. Préparer quote_in: models.QuoteCreate
-        # 3. Appeler crud.create_quote
-        # 4. Retourner confirmation
-        response_message = f"Ok, je peux préparer un devis pour les articles demandés. (Fonctionnalité en cours de développement). Pour l'instant, voici les articles que j'ai compris: {items_requested}"
-        return ChatResponse(message=response_message)
+        else:
+            # Tenter de créer le devis
+            quote_items_to_create: List[models.QuoteItemCreate] = []
+            not_found_skus = []
+            invalid_items = []
+            try:
+                for item in items_requested:
+                    sku = item.get("sku")
+                    quantity = item.get("quantity")
+                    if not sku or not quantity or quantity <= 0:
+                        invalid_items.append(item)
+                        continue
+                        
+                    variant = await crud.get_product_variant_by_sku(db=db, sku=sku)
+                    if not variant:
+                        not_found_skus.append(sku)
+                    else:
+                        quote_items_to_create.append(
+                            models.QuoteItemCreate(
+                                product_variant_id=variant.id,
+                                quantity=quantity,
+                                price_at_quote=variant.price # Prix actuel pour le devis
+                            )
+                        )
+                
+                if invalid_items:
+                    response_message = f"Certains articles demandés sont invalides (SKU ou quantité manquante/incorrecte): {invalid_items}. Veuillez corriger votre demande."
+                elif not_found_skus:
+                    response_message = f"Je n'ai pas pu trouver les produits avec les références suivantes: {', '.join(not_found_skus)}. Veuillez vérifier les références et réessayer."
+                elif not quote_items_to_create:
+                    response_message = "Je n'ai reconnu aucun produit valide pour créer un devis. Veuillez spécifier des produits avec référence (SKU) et quantité."
+                else:
+                    # Tous les items valides, créer le devis
+                    quote_to_create = models.QuoteCreate(
+                        user_id=current_user_db.id,
+                        items=quote_items_to_create
+                        # status et expires_at utilisent les valeurs par défaut du modèle
+                    )
+                    created_quote_db = await crud.create_quote(db=db, user_id=current_user_db.id, quote_in=quote_to_create)
+                    response_message = f"Devis créé avec succès ! Votre numéro de devis est {created_quote_db.id}."
+                    # TODO: Envoyer email? services.send_quote_email(...) 
+            
+            except HTTPException as e:
+                 logger.error(f"HTTPException lors de la création du devis via chat pour user {current_user_db.id}: {e.detail}", exc_info=True)
+                 response_message = f"Une erreur est survenue lors de la création du devis: {e.detail}"
+            except Exception as e:
+                 logger.error(f"Erreur inattendue lors de la création du devis via chat pour user {current_user_db.id}: {e}", exc_info=True)
+                 response_message = "Désolé, une erreur interne m'empêche de créer le devis pour le moment."
 
     elif intent == "passer_commande":
         logger.debug(f"Intention traitée: {intent}")
-        if not current_user:
+        should_call_llm = False # Réponse directe
+
+        if not current_user_db:
              response_message = "Pour passer commande, veuillez d'abord vous connecter ou créer un compte."
-             return ChatResponse(message=response_message)
-        if not items_requested:
+        elif not items_requested:
              response_message = "Je peux vous aider à passer commande, mais veuillez d'abord spécifier les produits (avec leur référence SKU) et les quantités souhaitées."
-             return ChatResponse(message=response_message)
-        
-        # TODO: Logique de création de commande (très simplifiée pour l'instant)
-        # 1. Valider items (existence SKU, stock suffisant pour TOUS les items)
-        # 2. Demander confirmation adresse livraison/facturation (nécessite dialogue ou lien frontend)
-        # 3. Préparer order_in: models.OrderCreate
-        # 4. Appeler crud.create_order
-        # 5. Retourner confirmation
-        response_message = f"Prêt à passer commande ! (Fonctionnalité en cours de développement). Je vérifierai le stock pour {items_requested}. Vous devrez ensuite confirmer vos adresses et le paiement sur la page de commande."
-        return ChatResponse(message=response_message)
+        else:
+            default_address = await crud.get_default_address_for_user(db=db, user_id=current_user_db.id)
+            if not default_address:
+                response_message = "Vous n'avez pas d'adresse par défaut configurée. Veuillez en ajouter une via votre profil avant de passer commande."
+            else:
+                # Tenter de créer la commande
+                order_items_to_create: List[models.OrderItemCreate] = []
+                not_found_skus = []
+                stock_issues = []
+                invalid_items = []
+                calculated_total = Decimal(0)
+                try:
+                    for item in items_requested:
+                        sku = item.get("sku")
+                        quantity = item.get("quantity")
+                        if not sku or not quantity or quantity <= 0:
+                            invalid_items.append(item)
+                            continue
+                            
+                        variant = await crud.get_product_variant_by_sku(db=db, sku=sku)
+                        if not variant:
+                            not_found_skus.append(sku)
+                            continue
+                        
+                        # Pré-vérification stock (la vraie vérif est dans crud.create_order)
+                        stock_info = await crud.get_stock_for_variant(db=db, variant_id=variant.id)
+                        current_stock = stock_info.quantity if stock_info else 0
+                        if current_stock < quantity:
+                            stock_issues.append(f"SKU {sku} (dispo: {current_stock}, demandé: {quantity})")
+                            continue # Ne pas ajouter cet item
+                        
+                        price = variant.price
+                        order_items_to_create.append(
+                            models.OrderItemCreate(
+                                product_variant_id=variant.id,
+                                quantity=quantity,
+                                price_at_order=price
+                            )
+                        )
+                        calculated_total += (price * quantity)
+
+                    if invalid_items:
+                         response_message = f"Certains articles demandés sont invalides (SKU ou quantité manquante/incorrecte): {invalid_items}. Veuillez corriger votre demande."
+                    elif not_found_skus:
+                        response_message = f"Je n'ai pas pu trouver les produits avec les références suivantes: {', '.join(not_found_skus)}. Veuillez vérifier et réessayer."
+                    elif stock_issues:
+                        response_message = f"Stock insuffisant pour les articles suivants: {', '.join(stock_issues)}. Veuillez ajuster votre commande."
+                    elif not order_items_to_create:
+                         response_message = "Je n'ai reconnu aucun produit valide ou disponible pour passer commande. Veuillez spécifier des produits avec référence (SKU) et quantité."
+                    else:
+                        # Tout est OK pour tenter la création
+                        order_to_create = models.OrderCreate(
+                            user_id=current_user_db.id,
+                            items=order_items_to_create,
+                            delivery_address_id=default_address.id,
+                            billing_address_id=default_address.id, # Simplification: utiliser la même
+                            total_amount=calculated_total # Utiliser le total calculé
+                            # status utilise la valeur par défaut
+                        )
+                        
+                        # crud.create_order gère la transaction et les erreurs de stock finales
+                        created_order_db = await crud.create_order(db=db, user_id=current_user_db.id, order_in=order_to_create)
+                        response_message = f"Commande créée avec succès ! Votre numéro de commande est {created_order_db.id}. Elle sera expédiée à votre adresse par défaut."
+                        # TODO: Envoyer email? services.send_order_confirmation_email(...) 
+                
+                except HTTPException as e:
+                    # Capturer les erreurs spécifiques de crud.create_order (ex: 409 stock final)
+                    logger.error(f"HTTPException lors de la création de la commande via chat pour user {current_user_db.id}: {e.detail}", exc_info=False) # Pas besoin de stacktrace complète pour 409 stock
+                    response_message = f"Impossible de créer la commande: {e.detail}"
+                except Exception as e:
+                    logger.error(f"Erreur inattendue lors de la création de la commande via chat pour user {current_user_db.id}: {e}", exc_info=True)
+                    response_message = "Désolé, une erreur interne m'empêche de passer la commande pour le moment."
 
     else:
-        # Intention inconnue, traiter comme info_generale
         logger.warning(f"Intention inconnue '{intent}', traitement comme info_generale.")
-        # Le prompt par défaut (general_chat_prompt) est déjà sélectionné
-        pass
+        pass # Utilise le prompt général
 
-    # --- Étape 3 : Génération de la réponse finale via LLM --- 
-    try:
-        logger.debug(f"Appel LLM (réponse finale) avec prompt: {final_prompt.template}")
-        final_formatted_prompt = final_prompt.format(**prompt_input_vars)
-        llm_response = await run_in_threadpool(current_llm.invoke, final_formatted_prompt)
-        response_message = llm_response.strip()
-        logger.info(f"Réponse finale LLM générée pour user={user_id_for_log}")
-    except Exception as e:
-        logger.error(f"Erreur lors de la génération de la réponse finale LLM: {e}", exc_info=True)
-        # Fallback vers un message générique
-        response_message = "Désolé, je n'ai pas pu traiter complètement votre demande à cause d'une erreur interne." 
-        # On pourrait utiliser un des FUNNY_ERROR_MESSAGES ici aussi
+    # --- Étape 3 : Génération de la réponse finale via LLM (si nécessaire) --- 
+    if should_call_llm:
+        try:
+            logger.debug(f"Appel LLM asynchrone (réponse finale) avec prompt: {final_prompt.template}")
+            final_formatted_prompt = final_prompt.format(**prompt_input_vars)
+            llm_response = await current_llm.ainvoke(final_formatted_prompt)
+            response_message = llm_response.strip()
+            logger.info(f"Réponse finale LLM générée pour user={user_id_for_log}")
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération de la réponse finale LLM: {e}", exc_info=True)
+            response_message = "Désolé, je n'ai pas pu traiter complètement votre demande à cause d'une erreur interne." 
+    elif not response_message: # Fallback si should_call_llm est False mais response_message est vide
+        logger.error("Erreur logique: should_call_llm est False mais aucun message de réponse directe n'a été défini.")
+        response_message = "Désolé, je ne peux pas traiter votre demande pour le moment."
 
     return ChatResponse(message=response_message)
 
 # ======================================================
+# Endpoints: Devis (Quotes) (Vérifier propriété ou admin)
 # Endpoints: Devis (Quotes)
 # ======================================================
 
-@app.post("/quotes/", response_model=models.Quote, status_code=status.HTTP_201_CREATED)
+@app.post("/quotes", response_model=models.Quote, status_code=status.HTTP_201_CREATED)
 async def create_new_quote(
-    quote_in: models.QuoteCreate, # Le modèle QuoteCreate contient les items
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    # Le payload doit correspondre à QuoteCreate (qui contient les QuoteItemCreate)
+    quote_request: models.QuoteCreate, # Utiliser directement le modèle Pydantic
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
     """Crée un nouveau devis pour l'utilisateur authentifié."""
-    logger.info(f"Création de devis pour l'utilisateur ID: {current_user.id}")
-    # Assigner le user_id de l'utilisateur courant au devis
-    # Note: Le modèle QuoteCreate n'a pas user_id, on le passe séparément à la fonction CRUD
+    logger.info(f"Création devis pour user ID: {current_user_db.id}")
+    # Assigner user_id de l'utilisateur connecté
+    quote_request.user_id = current_user_db.id
     try:
-        created_quote = await run_in_threadpool(crud.create_quote, user_id=current_user.id, quote_in=quote_in)
-        # TODO: Potentiellement envoyer un email de notification ici
-        return created_quote
+        created_quote_db = await crud.create_quote(db=db, user_id=current_user_db.id, quote_in=quote_request)
+        # Mapper vers Pydantic pour la réponse
+        return models.Quote.model_validate(created_quote_db)
     except HTTPException as e:
-        raise e # Remonter les erreurs 404 (variation non trouvée) ou autres
+        raise e # 404 si variation non trouvée
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la création de devis pour user {current_user.id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du devis.")
-
-@app.get("/quotes", response_model=List[models.Quote])
-async def get_my_quotes(
-    response: Response,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
-    limit: int = 20, 
-    offset: int = 0 
-):
-    """Liste les devis (en-têtes) de l'utilisateur authentifié."""
-    logger.info(f"Listage des devis pour l'utilisateur ID: {current_user.id}")
-    try:
-        quotes = await run_in_threadpool(crud.list_user_quotes, user_id=current_user.id, limit=limit, offset=offset)
-        
-        # Ajouter l'en-tête Content-Range
-        total_count = len(quotes) # NOTE: Ceci n'est pas le vrai total, juste le nombre retourné
-        end_range = offset + total_count - 1 if total_count > 0 else offset
-        content_range_header = f"quotes {offset}-{end_range}/{total_count}" 
-        response.headers["Content-Range"] = content_range_header
-        logger.debug(f"Setting Content-Range header for quotes: {content_range_header}")
-        
-        return quotes
-    except Exception as e:
-        logger.error(f"Erreur inattendue lors du listage des devis pour user {current_user.id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération des devis.")
+        logger.error(f"Erreur création devis pour user {current_user_db.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne création devis.")
 
 @app.get("/quotes/{quote_id}", response_model=models.Quote)
-async def get_specific_quote(
+async def read_quote(
     quote_id: int,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
-    """Récupère un devis spécifique de l'utilisateur authentifié."""
-    logger.info(f"Récupération devis ID: {quote_id} pour utilisateur ID: {current_user.id}")
+    """Récupère un devis spécifique."""
+    logger.info(f"Récupération devis ID: {quote_id} pour user {current_user_db.id}")
     try:
-        quote = await run_in_threadpool(crud.get_quote_by_id, quote_id=quote_id)
-        if not quote:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Devis non trouvé.")
-        # Vérifier que le devis appartient bien à l'utilisateur courant
-        if quote.user_id != current_user.id:
-            logger.warning(f"Tentative d'accès non autorisé au devis {quote_id} par l'utilisateur {current_user.id}")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à ce devis.")
-        return quote
+        quote_db = await crud.get_quote_by_id(db=db, quote_id=quote_id)
+        if quote_db is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Devis non trouvé")
+        # Vérifier que le devis appartient à l'utilisateur connecté
+        if quote_db.user_id != current_user_db.id:
+             logger.warning(f"Tentative d'accès non autorisé au devis {quote_id} par user {current_user_db.id}")
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à ce devis")
+        # Mapper vers Pydantic
+        return models.Quote.model_validate(quote_db)
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la récupération du devis {quote_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération du devis.")
+        logger.error(f"Erreur récupération devis {quote_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne récupération devis.")
 
-# Modèle Pydantic pour la mise à jour du statut
-class QuoteStatusUpdate(BaseModel):
-    status: str
+@app.get("/users/me/quotes", response_model=List[models.Quote])
+async def list_my_quotes(
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
+):
+    """Liste les devis de l'utilisateur authentifié."""
+    logger.info(f"Listage devis pour user {current_user_db.id}, limit={limit}, offset={offset}")
+    try:
+        quotes_db = await crud.list_user_quotes(db=db, user_id=current_user_db.id, limit=limit, offset=offset)
+        # Mapper vers Pydantic
+        return [models.Quote.model_validate(q) for q in quotes_db]
+    except Exception as e:
+        logger.error(f"Erreur listage devis pour user {current_user_db.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne listage devis.")
 
-@app.put("/quotes/{quote_id}/status", response_model=models.Quote)
+# Endpoint pour mettre à jour le statut d'un devis
+@app.patch("/quotes/{quote_id}/status", response_model=models.Quote)
 async def update_quote_status_endpoint(
     quote_id: int,
-    status_update: QuoteStatusUpdate, # Utiliser le modèle Pydantic
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    status_update: str = Body(..., embed=True, alias="status"),
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
-    """Met à jour le statut d'un devis de l'utilisateur authentifié."""
-    logger.info(f"Mise à jour statut devis ID: {quote_id} -> {status_update.status} pour utilisateur ID: {current_user.id}")
-    
-    # Vérifier d'abord que le devis existe et appartient à l'utilisateur
-    quote = await run_in_threadpool(crud.get_quote_by_id, quote_id=quote_id) # Récupère l'en-tête suffit
-    if not quote:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Devis non trouvé.")
-    if quote.user_id != current_user.id:
-        logger.warning(f"Tentative de mise à jour non autorisée du statut du devis {quote_id} par l'utilisateur {current_user.id}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à ce devis.")
+    """Met à jour le statut d'un devis."""
+     # Vérifier que le devis appartient à l'utilisateur (ou admin)
+    quote_db_check = await crud.get_quote_by_id(db=db, quote_id=quote_id)
+    if not quote_db_check:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Devis non trouvé")
+    if quote_db_check.user_id != current_user_db.id:
+        # TODO: Ajouter vérification rôle admin si nécessaire
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à ce devis")
 
+    logger.info(f"Mise à jour statut devis {quote_id} à '{status_update}' par user {current_user_db.id}")
     try:
-        # Mettre à jour le statut via la fonction CRUD
-        updated_quote = await run_in_threadpool(crud.update_quote_status, quote_id=quote_id, status=status_update.status)
-        # La fonction CRUD update_quote_status retourne déjà le devis mis à jour ou lève une exception 404/400
-        if not updated_quote: # Double sécurité
-             raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour du statut du devis.")
-        # TODO: Si status == 'accepted', déclencher potentiellement la création de commande ?
-        return updated_quote
+        updated_quote_db = await crud.update_quote_status(db=db, quote_id=quote_id, status=status_update)
+        # Mapper vers Pydantic
+        return models.Quote.model_validate(updated_quote_db)
     except HTTPException as e:
-        raise e # Remonter 404, 400 (statut invalide)
+        raise e # 400 (statut invalide), 404
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la mise à jour statut devis {quote_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la mise à jour du statut du devis.")
+        logger.error(f"Erreur MAJ statut devis {quote_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne MAJ statut devis.")
 
 # ======================================================
 # Endpoints: Commandes (Orders)
 # ======================================================
 
-@app.post("/orders/", response_model=models.Order, status_code=status.HTTP_201_CREATED)
+@app.post("/orders", response_model=models.Order, status_code=status.HTTP_201_CREATED)
 async def create_new_order(
-    order_in: models.OrderCreate, # Le modèle OrderCreate contient les items et infos de livraison
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    order_request: models.OrderCreate,
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
     """Crée une nouvelle commande pour l'utilisateur authentifié."""
-    logger.info(f"Création de commande pour l'utilisateur ID: {current_user.id}")
-    # Assigner le user_id de l'utilisateur courant
-    # Note: Le modèle OrderCreate n'a pas user_id dans sa définition de base, on le passe séparément à la fonction CRUD
-    # Correction: OrderCreate hérite de OrderBase qui a user_id. Forçons-le qd même par sécurité.
-    order_in_data = order_in.dict()
-    order_in_data['user_id'] = current_user.id
-    final_order_in = models.OrderCreate(**order_in_data) # Recrée l'objet avec le bon user_id
-    
+    logger.info(f"Création commande pour user ID: {current_user_db.id}")
+    order_request.user_id = current_user_db.id
     try:
-        # crud.create_order gère toute la logique transactionnelle:
-        # vérification stock, création order + items, MAJ stock, création mouvements
-        created_order = await run_in_threadpool(crud.create_order, user_id=current_user.id, order_in=final_order_in)
-        # TODO: Envoyer un email de confirmation de commande ici
-        return created_order
+        created_order_db = await crud.create_order(db=db, user_id=current_user_db.id, order_in=order_request)
+        # Mapper vers Pydantic
+        return models.Order.model_validate(created_order_db)
     except HTTPException as e:
-        # Remonter les erreurs spécifiques (404 variation/user/adresse, 409 stock insuffisant, 400 montant...)
-        raise e
+        raise e # 404 (user, adresse, variation), 409 (stock)
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la création de commande pour user {current_user.id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la commande.")
-
-@app.get("/orders", response_model=List[models.Order])
-async def get_my_orders(
-    response: Response,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)],
-    limit: int = 20, 
-    offset: int = 0
-):
-    """Liste les commandes (en-têtes) de l'utilisateur authentifié."""
-    logger.info(f"Listage des commandes pour l'utilisateur ID: {current_user.id}")
-    try:
-        orders = await run_in_threadpool(crud.list_user_orders, user_id=current_user.id, limit=limit, offset=offset)
-        
-        # Ajouter l'en-tête Content-Range
-        total_count = len(orders) # NOTE: Ceci n'est pas le vrai total, juste le nombre retourné
-        end_range = offset + total_count - 1 if total_count > 0 else offset
-        content_range_header = f"orders {offset}-{end_range}/{total_count}" 
-        response.headers["Content-Range"] = content_range_header
-        logger.debug(f"Setting Content-Range header for orders: {content_range_header}")
-        
-        return orders
-    except Exception as e:
-        logger.error(f"Erreur inattendue lors du listage des commandes pour user {current_user.id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération des commandes.")
+        logger.error(f"Erreur création commande pour user {current_user_db.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne création commande.")
 
 @app.get("/orders/{order_id}", response_model=models.Order)
-async def get_specific_order(
+async def read_order(
     order_id: int,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)]
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
-    """Récupère une commande spécifique de l'utilisateur authentifié."""
-    logger.info(f"Récupération commande ID: {order_id} pour utilisateur ID: {current_user.id}")
+    """Récupère une commande spécifique."""
+    logger.info(f"Récupération commande ID: {order_id} pour user {current_user_db.id}")
     try:
-        order = await run_in_threadpool(crud.get_order_by_id, order_id=order_id)
-        if not order:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commande non trouvée.")
-        # Vérifier que la commande appartient bien à l'utilisateur courant
-        if order.user_id != current_user.id:
-            # TODO: Ajouter une logique de permission pour les admins plus tard
-            logger.warning(f"Tentative d'accès non autorisé à la commande {order_id} par l'utilisateur {current_user.id}")
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à cette commande.")
-        return order
+        order_db = await crud.get_order_by_id(db=db, order_id=order_id)
+        if order_db is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commande non trouvée")
+        if order_db.user_id != current_user_db.id:
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à cette commande")
+        # Mapper vers Pydantic
+        return models.Order.model_validate(order_db)
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la récupération de la commande {order_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la récupération de la commande.")
+        logger.error(f"Erreur récupération commande {order_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne récupération commande.")
 
-# Modèle Pydantic pour la mise à jour du statut de commande
-class OrderStatusUpdate(BaseModel):
-    status: str
+@app.get("/users/me/orders", response_model=List[models.Order])
+async def list_my_orders(
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
+):
+    """Liste les commandes de l'utilisateur authentifié."""
+    logger.info(f"Listage commandes pour user {current_user_db.id}, limit={limit}, offset={offset}")
+    try:
+        orders_db = await crud.list_user_orders(db=db, user_id=current_user_db.id, limit=limit, offset=offset)
+        # Mapper vers Pydantic
+        return [models.Order.model_validate(o) for o in orders_db]
+    except Exception as e:
+        logger.error(f"Erreur listage commandes pour user {current_user_db.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne listage commandes.")
 
-@app.put("/orders/{order_id}/status", response_model=models.Order)
+# Endpoint pour mettre à jour le statut d'une commande
+@app.patch("/orders/{order_id}/status", response_model=models.Order)
 async def update_order_status_endpoint(
     order_id: int,
-    status_update: OrderStatusUpdate,
-    current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # TODO: Devrait être un admin?
+    status_update: str = Body(..., embed=True, alias="status"),
+    db: AsyncSession = Depends(get_db_session),
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)]
 ):
-    """Met à jour le statut d'une commande (actuellement pour l'utilisateur propriétaire)."""
-    logger.info(f"Mise à jour statut commande ID: {order_id} -> {status_update.status} par utilisateur ID: {current_user.id}")
+    """Met à jour le statut d'une commande."""
+    # Vérifier appartenance (ou rôle admin)
+    order_db_check = await crud.get_order_by_id(db=db, order_id=order_id)
+    if not order_db_check:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commande non trouvée")
+    if order_db_check.user_id != current_user_db.id:
+        # TODO: Vérifier si admin
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à cette commande")
 
-    # Vérifier que la commande existe et appartient à l'utilisateur (ou est admin)
-    # Utiliser get_order_by_id pour vérifier l'existence et l'appartenance en une fois
-    order = await run_in_threadpool(crud.get_order_by_id, order_id=order_id)
-    if not order:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commande non trouvée.")
-    if order.user_id != current_user.id:
-        # TODO: Vérifier si current_user est admin
-        logger.warning(f"Tentative de mise à jour non autorisée du statut de la commande {order_id} par l'utilisateur {current_user.id}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé à cette commande.")
-
+    logger.info(f"Mise à jour statut commande {order_id} à '{status_update}' par user {current_user_db.id}")
     try:
-        updated_order = await run_in_threadpool(crud.update_order_status, order_id=order_id, status=status_update.status)
-        # La fonction crud retourne déjà l'objet mis à jour ou lève une exception
-        if not updated_order: # Sécurité additionnelle
-             raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour du statut de la commande.")
-        # TODO: Envoyer notification de changement de statut?
-        return updated_order
+        updated_order_db = await crud.update_order_status(db=db, order_id=order_id, status=status_update)
+        # Mapper vers Pydantic
+        return models.Order.model_validate(updated_order_db)
     except HTTPException as e:
-        raise e # Remonter 404, 400 (statut invalide)
+        raise e # 400, 404
     except Exception as e:
-        logger.error(f"Erreur inattendue lors de la mise à jour statut commande {order_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la mise à jour du statut de la commande.")
+        logger.error(f"Erreur MAJ statut commande {order_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne MAJ statut commande.")
 
-# Ancien endpoint /order - Sera supprimé plus tard
-# @app.post("/order_old")
-# async def create_order_old(order_data: models.OrderRequest): # Ancien modèle
-#      logger.warning("Appel à l'ancien endpoint /order_old")
-#      raise HTTPException(status_code=501, detail="Endpoint obsolète. Utiliser POST /orders/")
+# ======================================================
+# Initialisation & Lancement (Non modifié)
+# ======================================================
+# ... (si vous avez une fonction main ou similaire) ...
+
+# Note: L'ancien endpoint /products_old a été supprimé car marqué deprecated et levait une erreur.
 
 # Lancement (si exécuté directement, pour debug local)
 # if __name__ == "__main__":

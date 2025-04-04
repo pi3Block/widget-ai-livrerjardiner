@@ -6,6 +6,8 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+# Importer la session DB et le modèle UserDB
+from database import get_db_session, AsyncSession
 import crud
 import models
 import config
@@ -47,8 +49,12 @@ def decode_access_token(token: str) -> Optional[int]:
         # Token invalide (signature, expiration, etc.)
         return None
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> models.User:
-    """Dépendance FastAPI pour obtenir l'utilisateur actuel à partir du token JWT."""
+# Renommée pour clarifier, retourne UserDB ou lève une exception
+async def get_current_user_db_from_token(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: AsyncSession = Depends(get_db_session) # Injecter la session DB
+) -> models.UserDB:
+    """Dépendance FastAPI pour obtenir l'objet UserDB à partir du token JWT."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -58,17 +64,59 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> mod
     if user_id is None:
         raise credentials_exception
         
-    # Utiliser run_in_threadpool si get_user_by_id fait des I/O bloquantes
-    # user = await run_in_threadpool(crud.get_user_by_id, user_id=user_id)
-    user = crud.get_user_by_id(user_id=user_id) # Supposons synchrone pour l'instant
+    # Utiliser la fonction crud asynchrone
+    user_db = await crud.get_user_by_id(db=db, user_id=user_id)
     
-    if user is None:
+    if user_db is None:
+        # L'utilisateur existait lors de la création du token, mais plus maintenant?
         raise credentials_exception
-    return user
+    return user_db
 
-# Dépendance pour obtenir l'utilisateur actif (pourrait ajouter des vérifications de statut plus tard)
-async def get_current_active_user(current_user: Annotated[models.User, Depends(get_current_user)]):
+# Dépendance principale pour obtenir l'utilisateur actif (retourne UserDB)
+async def get_current_active_user(
+    current_user_db: Annotated[models.UserDB, Depends(get_current_user_db_from_token)]
+) -> models.UserDB:
+    """Vérifie si l'utilisateur obtenu via le token est actif et le retourne."""
     # Ici, on pourrait vérifier si l'utilisateur est banni, désactivé, etc.
-    # if current_user.disabled:
-    #     raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user 
+    # if current_user_db.disabled:
+    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
+    return current_user_db
+
+# Nouvelle dépendance pour obtenir un utilisateur admin actif
+async def get_current_admin_user(
+    current_user_db: Annotated[models.UserDB, Depends(get_current_active_user)]
+) -> models.UserDB:
+    """Vérifie que l'utilisateur actif est aussi administrateur."""
+    if not current_user_db.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation not permitted. Administrator privileges required."
+        )
+    return current_user_db
+
+# --- Optionnel: Dépendance pour obtenir l'utilisateur actif (ou None) --- 
+async def get_optional_current_active_user(
+    token: Annotated[str | None, Depends(oauth2_scheme)] = None, # Rendre le token optionnel
+    db: AsyncSession = Depends(get_db_session)
+) -> models.UserDB | None:
+    """Récupère l'objet UserDB correspondant à l'utilisateur authentifié, ou None si non connecté/invalide."""
+    if token is None:
+        return None
+    try:
+        user_id = decode_access_token(token)
+        if user_id is None:
+            return None # Token valide mais sans ID?
+        
+        user_db = await crud.get_user_by_id(db, user_id=user_id)
+        if user_db is None:
+            return None # Utilisateur non trouvé en BDD
+        
+        # Vérification d'activité (si implémentée)
+        # if user_db.disabled:
+        #     return None 
+            
+        return user_db
+    except Exception as e: # Attrape JWTError ou autre
+        # Logguer l'erreur peut être utile ici
+        print(f"Erreur lors de la récupération de l'utilisateur optionnel: {e}") # TODO: Remplacer par logger
+        return None 
