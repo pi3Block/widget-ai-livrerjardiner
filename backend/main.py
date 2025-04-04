@@ -219,8 +219,8 @@ async def chat(input: str, delivery_method: str = "livraison", user_email: Optio
 
         parsed_intent = parsed_data.get("intent", "info_generale")
         entities = parsed_data.get("entities", {})
-        extracted_item = entities.get("item")
-        extracted_quantity = entities.get("quantity")
+        extracted_item = entities.get("item") if entities else None
+        extracted_quantity = entities.get("quantity") if entities else None
 
         # Validation basique
         if extracted_item is not None and not isinstance(extracted_item, str):

@@ -22,7 +22,35 @@ const Widget: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState<boolean>(false); // <-- Nouvel état pour plié/déplié, commence plié
   const widgetRef = useRef<HTMLDivElement>(null);
 
-  const toggleExpand = () => setIsExpanded(!isExpanded);
+  // Fonction pour basculer l'état plié/déplié et ajuster la position
+  const toggleExpand = () => {
+    const shouldExpand = !isExpanded;
+    setIsExpanded(shouldExpand);
+
+    // Si on déplie le widget
+    if (shouldExpand && widgetRef.current) {
+      // Utiliser setTimeout pour laisser le temps au DOM de se mettre à jour
+      // et au widget d'obtenir sa nouvelle hauteur 'auto' (ou maxHeight)
+      setTimeout(() => {
+        if (widgetRef.current) {
+          const widgetHeight = widgetRef.current.offsetHeight; // Hauteur réelle après dépliage
+          const windowHeight = window.innerHeight;
+          const currentY = position.y;
+          const bottomMargin = 20; // Marge souhaitée par rapport au bas
+
+          // Si le bas du widget dépasse le bas de la fenêtre + marge
+          if (currentY + widgetHeight > windowHeight - bottomMargin) {
+            const newY = windowHeight - widgetHeight - bottomMargin;
+            // S'assurer que le widget ne remonte pas au-dessus du haut de la fenêtre
+            setPosition({ x: position.x, y: Math.max(0, newY) });
+          }
+          // Optionnel: Si le widget était déjà "remonté" et qu'on le replie,
+          // on pourrait vouloir le remettre à sa position "pliée" d'origine ou la plus proche
+          // Mais pour l'instant, on ne le redescend pas automatiquement au repliage.
+        }
+      }, 50); // Petit délai pour la mise à jour du DOM/CSS
+    }
+  };
 
   // Fonction helper pour obtenir les coordonnées (souris ou tactile)
   const getEventCoordinates = (e: React.MouseEvent | MouseEvent | React.TouchEvent | TouchEvent): { x: number; y: number } | null => {
@@ -238,14 +266,21 @@ const Widget: React.FC = () => {
     width: isExpanded ? '300px' : '60px', // Taille différente si plié/déplié
     height: isExpanded ? 'auto' : '60px',
     maxHeight: isExpanded ? '600px': '60px', // Limite hauteur déplié
-    cursor: isExpanded ? (isDragging ? 'grabbing' : 'grab') : 'pointer', // Curseur différent si plié
-    userSelect: 'none',
+    // Appliquer 'grab'/'grabbing' seulement si isExpanded et pas sur un contrôle interactif (géré par handleDragStart)
+    // 'pointer' si plié
+    cursor: isExpanded ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
+    userSelect: isDragging ? 'none' : 'auto', // Empêcher la sélection SEULEMENT pendant le drag
     zIndex: 9999,
     borderRadius: isExpanded ? '8px' : '50%', // Rond si plié
-    overflow: 'hidden', // Cache le contenu si plié et plus petit
+    // overflow: 'hidden', // Remplacé par overflow-y sur le contenu si nécessaire
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)', // Ombre portée
-    transition: 'width 0.3s ease, height 0.3s ease, border-radius 0.3s ease', // Animation douce
+    transition: 'width 0.3s ease, height 0.3s ease, border-radius 0.3s ease, top 0.2s ease, left 0.2s ease', // Animation douce (ajout top/left)
     backgroundColor: 'white', // Fond blanc par défaut
+    display: 'flex', // Utiliser flex pour la structure interne
+    flexDirection: 'column', // Empiler header et content
+    // Utiliser 'visible' lorsque déplié pour permettre aux dropdowns de déborder
+    // Utiliser 'hidden' lorsque plié pour couper le contenu
+    overflow: isExpanded ? 'visible' : 'hidden', 
   };
 
   const collapsedButtonStyle: React.CSSProperties = {
