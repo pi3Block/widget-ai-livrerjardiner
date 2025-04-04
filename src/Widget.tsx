@@ -33,20 +33,36 @@ const Widget: React.FC = () => {
       // et au widget d'obtenir sa nouvelle hauteur 'auto' (ou maxHeight)
       setTimeout(() => {
         if (widgetRef.current) {
-          const widgetHeight = widgetRef.current.offsetHeight; // Hauteur réelle après dépliage
+          const widgetRect = widgetRef.current.getBoundingClientRect();
+          const widgetWidth = widgetRect.width;
+          const widgetHeight = widgetRect.height; // Utiliser getBoundingClientRect qui est plus fiable que offsetHeight après des changements CSS complexes
+          const windowWidth = window.innerWidth;
           const windowHeight = window.innerHeight;
+          const currentX = position.x;
           const currentY = position.y;
-          const bottomMargin = 20; // Marge souhaitée par rapport au bas
+          const margin = 20; // Marge commune pour droite et bas
 
-          // Si le bas du widget dépasse le bas de la fenêtre + marge
-          if (currentY + widgetHeight > windowHeight - bottomMargin) {
-            const newY = windowHeight - widgetHeight - bottomMargin;
-            // S'assurer que le widget ne remonte pas au-dessus du haut de la fenêtre
-            setPosition({ x: position.x, y: Math.max(0, newY) });
+          let newX = currentX;
+          let newY = currentY;
+
+          // Ajustement X (gauche)
+          if (currentX + widgetWidth > windowWidth - margin) {
+            newX = windowWidth - widgetWidth - margin;
           }
-          // Optionnel: Si le widget était déjà "remonté" et qu'on le replie,
-          // on pourrait vouloir le remettre à sa position "pliée" d'origine ou la plus proche
-          // Mais pour l'instant, on ne le redescend pas automatiquement au repliage.
+          // Empêcher de déborder à gauche
+          newX = Math.max(margin, newX); 
+
+          // Ajustement Y (haut)
+          if (currentY + widgetHeight > windowHeight - margin) {
+            newY = windowHeight - widgetHeight - margin;
+          }
+          // Empêcher de déborder en haut
+          newY = Math.max(margin, newY);
+
+          // Mettre à jour la position seulement si elle a changé
+          if (newX !== currentX || newY !== currentY) {
+             setPosition({ x: newX, y: newY });
+          }
         }
       }, 50); // Petit délai pour la mise à jour du DOM/CSS
     }
@@ -68,22 +84,20 @@ const Widget: React.FC = () => {
 
   // Gestionnaire de début de drag (commun pour souris et tactile)
   const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-      // Ne pas démarrer le drag si:
-      // 1. Widget plié
-      // 2. Clic/touch sur un élément interactif (input, select, button)
-      // 3. Clic/touch sur l'en-tête (pour permettre le pliage/dépliage)
-      const target = e.target as Node;
-      if (!isExpanded || 
-          (target instanceof HTMLInputElement) || 
-          (target instanceof HTMLSelectElement) || 
-          (target instanceof HTMLButtonElement)) {
-          const header = widgetRef.current?.querySelector('.widget-header');
-          if (header && header.contains(target)) {
-              return; // Ne pas démarrer le drag si on clique sur le header
-          }
-          if (!isExpanded) return; // Double sécurité: si pas déplié, on sort
+      const target = e.target as HTMLElement;
+
+      // Ne jamais démarrer le drag si la cible est un élément interactif ou à l'intérieur d'un élément interactif
+      if (target.closest('input, select, button, textarea')) {
+          return; // Laisse l'événement par défaut (focus, clic, etc.) se produire
       }
 
+      // Si le widget est plié, ne pas démarrer le drag (le seul clic géré est sur le bouton central pour déplier)
+      if (!isExpanded) {
+          return;
+      }
+
+      // Si on arrive ici, le widget est déplié ET on n'a pas cliqué sur un contrôle.
+      // On peut donc démarrer le drag.
       const coords = getEventCoordinates(e);
       if (widgetRef.current && coords) {
           const rect = widgetRef.current.getBoundingClientRect();
@@ -92,12 +106,10 @@ const Widget: React.FC = () => {
               y: coords.y - rect.top
           });
           setIsDragging(true);
-          // Prévenir sélection texte pour souris, comportement par défaut pour toucher (scroll) sera géré dans handleDragMove
-          if (!('touches' in e)) {
-              e.preventDefault(); 
-          }
+          // PAS de e.preventDefault() ici. Le preventDefault dans handleDragMove
+          // suffira pour empêcher le scroll PENDANT le drag actif.
       }
-  }, [isExpanded]);
+  }, [isExpanded]); // dragStartOffset n'est pas nécessaire en dépendance
 
   // Gestionnaire de mouvement (commun)
   const handleDragMove = useCallback((e: MouseEvent | TouchEvent) => {
@@ -266,21 +278,18 @@ const Widget: React.FC = () => {
     width: isExpanded ? '300px' : '60px', // Taille différente si plié/déplié
     height: isExpanded ? 'auto' : '60px',
     maxHeight: isExpanded ? '600px': '60px', // Limite hauteur déplié
-    // Appliquer 'grab'/'grabbing' seulement si isExpanded et pas sur un contrôle interactif (géré par handleDragStart)
-    // 'pointer' si plié
     cursor: isExpanded ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
     userSelect: isDragging ? 'none' : 'auto', // Empêcher la sélection SEULEMENT pendant le drag
     zIndex: 9999,
     borderRadius: isExpanded ? '8px' : '50%', // Rond si plié
-    // overflow: 'hidden', // Remplacé par overflow-y sur le contenu si nécessaire
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)', // Ombre portée
     transition: 'width 0.3s ease, height 0.3s ease, border-radius 0.3s ease, top 0.2s ease, left 0.2s ease', // Animation douce (ajout top/left)
     backgroundColor: 'white', // Fond blanc par défaut
     display: 'flex', // Utiliser flex pour la structure interne
     flexDirection: 'column', // Empiler header et content
-    // Utiliser 'visible' lorsque déplié pour permettre aux dropdowns de déborder
-    // Utiliser 'hidden' lorsque plié pour couper le contenu
-    overflow: isExpanded ? 'visible' : 'hidden', 
+    // Revenir à 'hidden' pour le conteneur global pour éviter les problèmes de performance/layout
+    // Les scrollbars internes (ex: réponse) gèreront le dépassement de leur propre contenu.
+    overflow: 'hidden', 
   };
 
   const collapsedButtonStyle: React.CSSProperties = {
@@ -313,12 +322,27 @@ const Widget: React.FC = () => {
           {/* Widget Déplié */}
           <div
             className="widget-header"
-            onClick={toggleExpand} // Toujours pour replier
-            style={{ cursor: 'pointer', padding: '10px', borderBottom: '1px solid #eee', backgroundColor: '#f8f8f8' }} 
+            style={{ cursor: 'default', padding: '10px', borderBottom: '1px solid #eee', backgroundColor: '#f8f8f8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} 
           >
-            Chatbot LivrerJardiner <span style={{ float: 'right', fontWeight: 'bold' }}>_</span>
+            <span>Chatbot LivrerJardiner</span>
+            {/* Bouton pour réduire */}
+            <button 
+              onClick={toggleExpand} 
+              title="Réduire"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#555',
+                fontSize: '18px',
+                cursor: 'pointer',
+                padding: '0 5px',
+                lineHeight: '1'
+              }}
+            >
+              _
+            </button>
           </div>
-          <div className="widget-content" style={{ padding: '10px' }}>
+          <div className="widget-content" style={{ padding: '10px', overflowY: 'auto', flexGrow: 1 /* Permet au contenu de prendre l'espace et de scroller */ }}>
             {/* Input texte */}
             <input
               type="text"
