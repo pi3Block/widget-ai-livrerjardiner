@@ -16,9 +16,34 @@
     *   [x] **Intégrer le `dataProvider`** configuré.
 
 3.  **Définition des Ressources CRUD**
-    *   [x] **Identifier les entités** (`products`, `categories` principalement pour l'instant).
-    *   [x] **Pour chaque entité, définir une `<Resource>`** (`products`, `categories`).
-    *   [x] **Remplacer les `Guesser`** par des composants spécifiques (`ProductList/Edit/Create`, `CategoryList/Edit/Create`).
+    *   [ ] **Identifier les entités** à gérer via l'interface d'administration :
+        *   `users`
+        *   `addresses`
+        *   `categories`
+        *   `tags`
+        *   `products`
+        *   `product_variants`
+        *   `product_variant_tags` (Table de liaison)
+        *   `stock`
+        *   `stock_movements`
+        *   `quotes`
+        *   `quote_items`
+        *   `orders`
+        *   `order_items`
+    *   [ ] **Pour chaque entité, définir une `<Resource>`** avec les vues associées (List, Edit, Create, Show si pertinent).
+        *   [x] `products` (partiellement fait)
+        *   [x] `categories` (partiellement fait)
+        *   [ ] `users`
+        *   [ ] `addresses`
+        *   [ ] `tags`
+        *   [ ] `product_variants`
+        *   [ ] `stock`
+        *   [ ] `stock_movements`
+        *   [ ] `quotes`
+        *   [ ] `quote_items`
+        *   [ ] `orders`
+        *   [ ] `order_items`
+    *   [ ] **Remplacer les `Guesser`** par des composants spécifiques pour chaque ressource.
 
 4.  **Implémentation de l'Authentification**
     *   [x] **Créer un `authProvider`** (`src/admin/authProvider.ts`).
@@ -33,19 +58,39 @@
     *   [x] **Personnaliser la page de connexion** (label Email, bouton Créer compte).
 
 5.  **Personnalisation de l'Interface Utilisateur**
-    *   [ ] **Gérer les relations** entre les entités :
-        *   [x] Clés étrangères (one-to-many) : `<ReferenceInput>` utilisé pour `category_id` dans `ProductCreate`.
-        *   [ ] Vérifier `<ReferenceField>` dans les listes/éditions.
-        *   [ ] Gérer la relation `parent_category_id` pour les catégories.
-        *   [ ] Relations inversées (one-to-many) : `variants` dans `Product` ?
-        *   [ ] Relations many-to-many : `tags` pour `ProductVariant` ?
-    *   [ ] **Gérer les types de données spécifiques** (ex: JSONB pour `attributes` dans `ProductVariant`).
-    *   [ ] **Améliorer l'ergonomie** des formulaires et des listes (filtres, tris, champs affichés).
+    *   [ ] **Gérer les relations** entre les entités (ex: `<ReferenceInput>`, `<ReferenceField>`, `<ReferenceManyField>`, `<ArrayInput>` pour many-to-many):
+        *   [x] `Product` <-> `Category` (one-to-many)
+        *   [ ] `Category` <-> `Category` (parent_category_id, self-reference)
+        *   [ ] `Product` <-> `ProductVariant` (one-to-many)
+        *   [ ] `ProductVariant` <-> `Tag` (many-to-many via `product_variant_tags`)
+        *   [ ] `User` <-> `Address` (one-to-many)
+        *   [ ] `User` <-> `Order` (one-to-many)
+        *   [ ] `User` <-> `Quote` (one-to-many)
+        *   [ ] `ProductVariant` <-> `Stock` (one-to-one ou one-to-many si gestion multi-entrepôts)
+        *   [ ] `Stock` <-> `StockMovement` (one-to-many)
+        *   [ ] `Quote` <-> `QuoteItem` (one-to-many)
+        *   [ ] `Order` <-> `OrderItem` (one-to-many)
+        *   [ ] `QuoteItem`/`OrderItem` <-> `ProductVariant` (many-to-one)
+    *   [ ] **Gérer les types de données spécifiques** (ex: JSONB pour `attributes` dans `ProductVariant`, gestion des dates, des statuts enum).
+    *   [ ] **Améliorer l'ergonomie** des formulaires et des listes (filtres, tris, champs affichés, vues conditionnelles).
     *   [ ] **Adapter le thème** si nécessaire.
 
 6.  **Tests et Affinements**
-    *   [x] **Tester** CRUD `products`, `categories` (basique).
+    *   [ ] **Tester** le CRUD pour chaque ressource définie.
+        *   [x] `products` (basique)
+        *   [x] `categories` (basique)
+        *   [ ] `users`
+        *   [ ] `addresses`
+        *   [ ] `tags`
+        *   [ ] `product_variants`
+        *   [ ] `stock`
+        *   [ ] `stock_movements`
+        *   [ ] `quotes`
+        *   [ ] `quote_items`
+        *   [ ] `orders`
+        *   [ ] `order_items`
     *   [x] **Tester** le flux d'authentification (login/logout).
+    *   [ ] **Tester** la gestion des relations et des types spécifiques.
     *   [ ] **Recueillir les retours** et affiner l'interface.
     *   [ ] **Vérifier** la gestion des erreurs (autres que 401/403).
 

@@ -244,6 +244,27 @@ async def create_new_product(
         logger.error(f"Erreur inattendue lors de la création du produit '{product_in.name}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création du produit.")
 
+# Endpoint GET pour récupérer un produit spécifique par ID
+@app.get("/products/{product_id}", response_model=models.Product)
+async def read_product(
+    product_id: int,
+    # current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Décommenter si authentification requise
+):
+    """Récupère un produit spécifique par son ID, incluant ses variations."""
+    logger.info(f"Requête get_product pour ID: {product_id}")
+    try:
+        product = await run_in_threadpool(crud.get_product_by_id, product_id=product_id)
+        if product is None:
+            logger.warning(f"Produit ID {product_id} non trouvé.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produit non trouvé")
+        return product
+    except HTTPException as e:
+        raise e # Remonter les erreurs HTTP (comme 404)
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du produit ID {product_id}: {e}", exc_info=True)
+        error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+
 # Endpoint GET pour lister toutes les catégories (utile pour les ReferenceInput)
 @app.get("/categories", response_model=List[models.Category])
 async def list_all_categories(response: Response):
@@ -273,16 +294,37 @@ async def create_new_category(
     current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Sécurité
 ):
     """Crée une nouvelle catégorie."""
-    # TODO: Vérification de rôle admin?
+    # TODO: Ajouter une vérification de rôle si seuls les admins peuvent créer
     logger.info(f"Tentative de création de catégorie par user ID: {current_user.id}")
     try:
         created_category = await run_in_threadpool(crud.create_category, category=category_in)
         return created_category
     except HTTPException as e:
-        raise e # Remonter les erreurs (ex: 409 nom déjà pris)
+        raise e # Remonter les erreurs (ex: nom dupliqué?)
     except Exception as e:
         logger.error(f"Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la création de la catégorie.")
+
+# Endpoint GET pour récupérer une catégorie spécifique par ID
+@app.get("/categories/{category_id}", response_model=models.Category)
+async def read_category(
+    category_id: int,
+    # current_user: Annotated[models.User, Depends(auth.get_current_active_user)] # Décommenter si authentification requise
+):
+    """Récupère une catégorie spécifique par son ID."""
+    logger.info(f"Requête get_category pour ID: {category_id}")
+    try:
+        category = await run_in_threadpool(crud.get_category, category_id=category_id)
+        if category is None:
+            logger.warning(f"Catégorie ID {category_id} non trouvée.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie non trouvée")
+        return category
+    except HTTPException as e:
+        raise e # Remonter les erreurs HTTP (comme 404)
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération de la catégorie ID {category_id}: {e}", exc_info=True)
+        error_message = random.choice(config.FUNNY_ERROR_MESSAGES) 
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
 # TODO: Ajouter endpoints pour gérer Tags (GET) si nécessaire
 # TODO: Ajouter endpoints pour gérer Product Variants (POST, GET, PUT, DELETE) si nécessaire (pour admin)

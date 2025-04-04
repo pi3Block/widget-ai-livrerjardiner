@@ -195,7 +195,7 @@ def get_product_variant_by_sku(sku: str) -> Optional[models.ProductVariant]:
             if not result:
                 logger.warning(f"[CRUD] Variation SKU {sku} non trouvée.")
                 return None
-            
+
             variant_id = result[0]
             variant_data = {
                 "id": result[0],
@@ -207,7 +207,7 @@ def get_product_variant_by_sku(sku: str) -> Optional[models.ProductVariant]:
                 "created_at": result[6],
                 "updated_at": result[7]
             }
-            
+
             # 2. Récupérer les tags associés (dans la même transaction, pas besoin de get_tags_for_variant externe)
             cur.execute(
                  "SELECT t.id, t.name FROM tags t JOIN product_variant_tags pvt ON t.id = pvt.tag_id WHERE pvt.product_variant_id = %s",
@@ -221,7 +221,97 @@ def get_product_variant_by_sku(sku: str) -> Optional[models.ProductVariant]:
         # Mapper le résultat vers le modèle Pydantic
         variant_data["tags"] = tags
         return models.ProductVariant(**variant_data)
-            
+
+    except Exception as e:
+        _handle_db_error(e, conn, rollback=False) # Pas de rollback pour un SELECT
+    finally:
+        _release_db_conn(conn)
+
+def get_product_by_id(product_id: int) -> Optional[models.Product]:
+    """Récupère un produit par son ID, incluant toutes ses variations et leurs tags."""
+    logger.debug(f"[CRUD] Recherche du produit ID: {product_id} avec variations et tags")
+    conn = None
+    try:
+        conn = _get_db_conn()
+        product_data = None
+        variants_list = []
+
+        with conn.cursor() as cur:
+            # 1. Récupérer les informations de base du produit
+            cur.execute(
+                """
+                SELECT p.id, p.name, p.base_description, p.category_id, p.created_at, p.updated_at,
+                       c.name as category_name
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                WHERE p.id = %s
+                """,
+                (product_id,)
+            )
+            product_result = cur.fetchone()
+
+            if not product_result:
+                logger.warning(f"[CRUD] Produit ID {product_id} non trouvé.")
+                return None
+
+            product_data = {
+                "id": product_result[0],
+                "name": product_result[1],
+                "base_description": product_result[2],
+                "category_id": product_result[3],
+                "created_at": product_result[4],
+                "updated_at": product_result[5],
+                "category_name": product_result[6] # Nom de la catégorie pour info
+                # Le champ 'variants' sera ajouté après récupération des variations
+            }
+
+            # 2. Récupérer toutes les variations et leurs tags pour ce produit
+            cur.execute(
+                """
+                SELECT
+                    pv.id, pv.product_id, pv.sku, pv.attributes, pv.price, pv.image_url,
+                    pv.created_at, pv.updated_at,
+                    t.id AS tag_id, t.name AS tag_name
+                FROM product_variants pv
+                LEFT JOIN product_variant_tags pvt ON pv.id = pvt.product_variant_id
+                LEFT JOIN tags t ON pvt.tag_id = t.id
+                WHERE pv.product_id = %s
+                ORDER BY pv.id, t.id -- Ordonner pour faciliter le regroupement
+                """,
+                (product_id,)
+            )
+            variant_results = cur.fetchall()
+
+            # Regrouper les tags par variation
+            variants_dict: Dict[int, models.ProductVariant] = {}
+            for row in variant_results:
+                variant_id = row[0]
+                if variant_id not in variants_dict:
+                    variants_dict[variant_id] = models.ProductVariant(
+                        id=row[0],
+                        product_id=row[1],
+                        sku=row[2],
+                        attributes=row[3],
+                        price=row[4],
+                        image_url=row[5],
+                        created_at=row[6],
+                        updated_at=row[7],
+                        tags=[] # Initialiser la liste des tags
+                    )
+                # Ajouter le tag s'il existe
+                if row[8] is not None: # tag_id
+                    variants_dict[variant_id].tags.append(models.Tag(id=row[8], name=row[9]))
+
+            variants_list = list(variants_dict.values())
+
+        logger.debug(f"[CRUD] Produit ID {product_id} trouvé avec {len(variants_list)} variations.")
+
+        # Ajouter la liste des variations au dictionnaire produit et créer l'objet Product
+        product_data["variants"] = variants_list
+        # Supprimer category_name car il n'est pas dans le modèle Product standard
+        del product_data["category_name"]
+        return models.Product(**product_data)
+
     except Exception as e:
         _handle_db_error(e, conn, rollback=False) # Pas de rollback pour un SELECT
     finally:
