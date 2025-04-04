@@ -204,8 +204,15 @@ class UserBase(OrmBaseModel):
 class UserCreate(UserBase):
     password: str # Mot de passe en clair lors de la création/login
 
+# --- Schéma UserUpdate (Nouveau) ---
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    # Note: email, password, is_admin ne sont typiquement pas modifiés ici
+    # Des endpoints dédiés seraient plus sûrs.
+
 class User(UserBase):
     id: int
+    is_admin: bool # Ajouté pour correspondre à UserDB
     created_at: datetime
     updated_at: datetime
     addresses: List[AddressDBBase] = [] # Relation chargée via ORM
@@ -221,6 +228,12 @@ class CategoryBase(OrmBaseModel):
 
 class CategoryCreate(CategoryBase):
     pass
+
+# --- Schéma CategoryUpdate (Nouveau) ---
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parent_category_id: Optional[int] = None
 
 class Category(CategoryBase):
     id: int
@@ -249,24 +262,38 @@ class ProductBase(OrmBaseModel):
 class ProductCreate(ProductBase):
     pass
 
+# --- Schéma ProductUpdate (Nouveau) ---
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    base_description: Optional[str] = None
+    category_id: Optional[int] = None
+
 # Modèle pour les variations de produit
 class ProductVariantBase(OrmBaseModel):
-    sku: str = Field(..., description="Référence unique (SKU) de la variation")
-    attributes: Optional[Dict[str, Any]] = None # ex: {'size': 'M', 'color': 'Red'}
+    sku: str
+    attributes: Optional[Dict[str, Any]] = None
     price: Decimal
     image_url: Optional[str] = None
+    # product_id est géré lors de la création
 
 class ProductVariantCreate(ProductVariantBase):
-    product_id: int # Nécessaire à la création
-    initial_stock: Optional[int] = Field(0, description="Stock initial lors de la création de la variation")
-    stock_alert_threshold: Optional[int] = 10
+    product_id: int # Requis à la création
+
+# --- Schéma ProductVariantUpdate (Nouveau) ---
+class ProductVariantUpdate(BaseModel):
+    # sku: Optional[str] = None # SKU ne devrait pas changer
+    attributes: Optional[Dict[str, Any]] = None
+    price: Optional[Decimal] = None
+    image_url: Optional[str] = None
+    # product_id ne devrait pas changer
 
 class ProductVariant(ProductVariantBase):
     id: int
     product_id: int
     created_at: datetime
     updated_at: datetime
-    tags: List[Tag] = [] # Relation chargée via ORM
+    tags: List[Tag] = []
+    # stock: Optional[Stock] = None # Ajouter si le schéma Stock Pydantic existe
 
 # Modèle complet du produit avec ses variations
 class Product(ProductBase):
@@ -315,30 +342,35 @@ class QuoteItemBase(OrmBaseModel):
     price_at_quote: Decimal
 
 class QuoteItemCreate(QuoteItemBase):
-    pass # quote_id sera ajouté par le service
+    pass
 
 class QuoteItem(QuoteItemBase):
     id: int
     quote_id: int
-    created_at: datetime
-    updated_at: datetime
-    variant: Optional[ProductVariant] = None # Relation chargée
+    # variant: ProductVariant # Relation chargée
 
 class QuoteBase(OrmBaseModel):
     user_id: int
-    status: str = 'pending'
+    status: str = Field(default='pending')
     expires_at: Optional[datetime] = None
 
 class QuoteCreate(QuoteBase):
-    items: List[QuoteItemCreate] # Les items sont créés en même temps
+    items: List[QuoteItemCreate]
+
+# --- Schéma QuoteUpdate (Nouveau - exemple simple) ---
+class QuoteUpdate(BaseModel):
+    # status est géré par un endpoint dédié
+    expires_at: Optional[datetime] = None
+    # Modifier items d'un devis existant est complexe, 
+    # géré via des endpoints spécifiques si nécessaire.
 
 class Quote(QuoteBase):
     id: int
     quote_date: datetime
     created_at: datetime
     updated_at: datetime
-    user: Optional[User] = None # Relation chargée
-    items: List[QuoteItem] = [] # Relation chargée
+    items: List[QuoteItem] = []
+    # user: User # Relation chargée
 
 # ======================================================
 # Models: Orders & Order Items
@@ -350,35 +382,40 @@ class OrderItemBase(OrmBaseModel):
     price_at_order: Decimal
 
 class OrderItemCreate(OrderItemBase):
-    pass # order_id sera ajouté par le service
+    pass
 
 class OrderItem(OrderItemBase):
     id: int
     order_id: int
-    created_at: datetime
-    updated_at: datetime
-    variant: Optional[ProductVariant] = None # Relation chargée
+    # variant: ProductVariant # Relation chargée
 
 class OrderBase(OrmBaseModel):
     user_id: int
-    status: str = 'pending'
-    total_amount: Decimal
     delivery_address_id: int
     billing_address_id: int
+    status: str = Field(default='pending')
+    total_amount: Decimal
 
 class OrderCreate(OrderBase):
-    items: List[OrderItemCreate] # Les items sont créés en même temps
-    # delivery_method: str # Si on veut le garder en dehors de l'adresse ?
+    items: List[OrderItemCreate]
+
+# --- Schéma OrderUpdate (Nouveau - exemple simple) ---
+class OrderUpdate(BaseModel):
+    # status est géré par un endpoint dédié
+    # Modifier items, adresses, total d'une commande existante est généralement interdit
+    # ou soumis à des règles métier strictes (avant expédition etc.)
+    # On le laisse vide pour l'instant, juste pour l'utiliser dans FastCRUD.
+    pass 
 
 class Order(OrderBase):
     id: int
     order_date: datetime
     created_at: datetime
     updated_at: datetime
-    user: Optional[User] = None # Relation chargée
-    delivery_address: Optional[AddressDB] = None # Relation chargée
-    billing_address: Optional[AddressDB] = None # Relation chargée
-    items: List[OrderItem] = [] # Relation chargée
+    items: List[OrderItem] = []
+    # user: User # Relation chargée
+    # delivery_address: AddressDBBase # Relation chargée
+    # billing_address: AddressDBBase # Relation chargée
 
 # ======================================================
 # Models: Request Payloads (Exemples)

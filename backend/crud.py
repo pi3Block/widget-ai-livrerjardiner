@@ -53,18 +53,18 @@ logger = logging.getLogger(__name__)
 # - le schéma Pydantic pour la mise à jour (update_schema=...Update - à créer si besoin)
 # - le schéma Pydantic pour la lecture (read_schema=...)
 
-crud_user = FastCRUD(UserDB, UserCreate, User, User) # TODO: Créer UserUpdate si besoin
-crud_address = FastCRUD(AddressDB, AddressCreate, Address, Address) # TODO: Créer AddressUpdate
-crud_category = FastCRUD(CategoryDB, CategoryCreate, Category, Category) # TODO: Créer CategoryUpdate
-crud_tag = FastCRUD(TagDB, TagCreate, Tag, Tag) # TODO: Créer TagUpdate
-crud_product = FastCRUD(ProductDB, ProductCreate, Product, Product) # TODO: Créer ProductUpdate
-crud_product_variant = FastCRUD(ProductVariantDB, ProductVariantCreate, ProductVariant, ProductVariant) # TODO: Créer ProductVariantUpdate
-crud_stock = FastCRUD(StockDB, models.Stock, models.Stock, models.Stock) # TODO: Affiner schémas Stock si besoin
-crud_stock_movement = FastCRUD(StockMovementDB, StockMovementCreate, StockMovement, StockMovement)
-crud_quote = FastCRUD(QuoteDB, QuoteCreate, Quote, Quote) # TODO: Créer QuoteUpdate
-crud_quote_item = FastCRUD(QuoteItemDB, QuoteItemCreate, QuoteItem, QuoteItem)
-crud_order = FastCRUD(OrderDB, OrderCreate, Order, Order) # TODO: Créer OrderUpdate
-crud_order_item = FastCRUD(OrderItemDB, OrderItemCreate, OrderItem, OrderItem)
+crud_user = FastCRUD(UserDB, UserCreate, models.UserUpdate, User)
+crud_address = FastCRUD(AddressDB, AddressCreate, models.AddressUpdate, Address)
+crud_category = FastCRUD(CategoryDB, CategoryCreate, models.CategoryUpdate, Category)
+crud_tag = FastCRUD(TagDB, TagCreate, TagCreate, Tag)
+crud_product = FastCRUD(ProductDB, ProductCreate, models.ProductUpdate, Product)
+crud_product_variant = FastCRUD(ProductVariantDB, ProductVariantCreate, models.ProductVariantUpdate, ProductVariant)
+crud_stock = FastCRUD(StockDB, models.StockBase, models.StockBase, models.Stock)
+crud_stock_movement = FastCRUD(StockMovementDB, StockMovementCreate, StockMovementCreate, StockMovement)
+crud_quote = FastCRUD(QuoteDB, QuoteCreate, models.QuoteUpdate, Quote)
+crud_quote_item = FastCRUD(QuoteItemDB, QuoteItemCreate, QuoteItemCreate, QuoteItem)
+crud_order = FastCRUD(OrderDB, OrderCreate, models.OrderUpdate, Order)
+crud_order_item = FastCRUD(OrderItemDB, OrderItemCreate, OrderItemCreate, OrderItem)
 
 # ======================================================
 # Logique CRUD (Avec SQLAlchemy & FastCRUD - Nouvelle)
@@ -107,7 +107,6 @@ async def create_user(db: AsyncSession, user_in: models.UserCreate) -> models.Us
         # Lever une exception pour informer l'appelant et déclencher le rollback
         raise HTTPException(status_code=500, detail="Erreur interne lors de la création de l'utilisateur.")
 
-# La fonction authenticate_user nécessite également une refactorisation similaire
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[models.UserDB]:
     """Authentifie un utilisateur par email et mot de passe en utilisant SQLAlchemy/FastCRUD."""
     logger.debug(f"[CRUD_V2] Tentative d'authentification pour: {email}")
@@ -137,11 +136,6 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
     # 3. Retourner l'objet UserDB complet (le hash sera filtré au niveau de l'API si besoin)
     return user_db
 
-def authenticate_user_old(email: str, password: str) -> Optional[models.User]:
-    """(Ancien - psycopg2) Authentifie un utilisateur par email et mot de passe."""
-    logger.debug(f"[CRUD_OLD] Tentative d'authentification pour: {email}")
-    # ... existing code ...
-
 async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[models.UserDB]:
     """Récupère un utilisateur par son ID en utilisant FastCRUD, chargeant éventuellement les adresses."""
     logger.debug(f"[CRUD_V2] Récupération utilisateur ID: {user_id}")
@@ -152,7 +146,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[models.User
         user_db = await crud_user.get(db=db, id=user_id)
         if not user_db:
             logger.warning(f"[CRUD_V2] User ID {user_id} non trouvé.")
-            return None
+                return None
         return user_db
     except Exception as e:
         logger.error(f"[CRUD_V2] Erreur lors de la récupération de l'utilisateur ID {user_id}: {e}", exc_info=True)
@@ -237,15 +231,13 @@ async def update_user_address(
     address_id: int,
     address_in: models.AddressUpdate
 ) -> Optional[models.AddressDB]:
-    """Met à jour une adresse existante d'un utilisateur.
-
-    Ne permet pas de changer user_id ou is_default via cet appel.
-    Retourne l'adresse mise à jour ou None si non trouvée / n'appartient pas à l'user.
-    """
+    """Met à jour une adresse existante d'un utilisateur via FastCRUD."""
+    logger.debug(f"[CRUD_V3] Tentative MAJ adresse ID {address_id} pour user ID {user_id} via FastCRUD")
     db_address = await get_address_by_id(db, address_id)
 
-    # Vérifier existence et appartenance
+    # Vérifier existence et appartenance (gardé)
     if not db_address or db_address.user_id != user_id:
+        logger.warning(f"[CRUD_V3] Adresse {address_id} non trouvée ou n'appartient pas à user {user_id} pour MAJ.")
         return None
 
     # Obtenir les données de mise à jour (exclure les non définis)
@@ -253,39 +245,37 @@ async def update_user_address(
 
     # Si aucune donnée à mettre à jour, retourner l'adresse actuelle
     if not update_data:
+        logger.debug(f"[CRUD_V3] Aucune donnée à mettre à jour pour adresse {address_id}. Retour objet actuel.")
         return db_address
 
-    # Appliquer les mises à jour
-    for key, value in update_data.items():
-        setattr(db_address, key, value)
-
-    db.add(db_address)
-    await db.commit()
-    await db.refresh(db_address)
-
-    return db_address
+    try:
+        # Appliquer la mise à jour avec FastCRUD
+        # Note: 'id' est utilisé par FastCRUD pour identifier l'enregistrement à mettre à jour
+        updated_address_db = await crud_address.update(db=db, object=update_data, id=address_id)
+        # Pas besoin de commit/refresh, géré par get_db_session et le retour de crud_address.update
+        logger.info(f"[CRUD_V3] Adresse ID {address_id} mise à jour avec succès.")
+        return updated_address_db
+    except Exception as e:
+        logger.error(f"[CRUD_V3] Erreur FastCRUD lors MAJ adresse {address_id} pour user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour de l'adresse.")
 
 # --- Delete Address ---
 async def delete_user_address(db: AsyncSession, user_id: int, address_id: int) -> bool:
-    """Supprime une adresse d'un utilisateur.
-
-    Vérifie l'appartenance, si l'adresse est par défaut, ou si elle est utilisée dans des commandes.
-    Retourne True si supprimée, False sinon (ou lève une exception).
-    Lève HTTPException 400 si la suppression est interdite (défaut, utilisée).
-    Lève HTTPException 404 si non trouvée / n'appartient pas à l'user.
-    """
+    """Supprime une adresse d'un utilisateur via FastCRUD, avec vérifications."""
+    logger.debug(f"[CRUD_V3] Tentative suppression adresse ID {address_id} pour user ID {user_id} via FastCRUD")
     db_address = await get_address_by_id(db, address_id)
 
-    # Vérifier existence et appartenance
+    # Vérifier existence et appartenance (gardé)
     if not db_address or db_address.user_id != user_id:
+        logger.warning(f"[CRUD_V3] Adresse {address_id} non trouvée ou n'appartient pas à user {user_id} pour suppression.")
         raise HTTPException(status_code=404, detail=f"Address with id {address_id} not found or does not belong to user {user_id}")
 
-    # Vérifier si c'est l'adresse par défaut
+    # Vérifier si c'est l'adresse par défaut (gardé)
     if db_address.is_default:
+        logger.warning(f"[CRUD_V3] Tentative de suppression de l'adresse par défaut {address_id} pour user {user_id}.")
         raise HTTPException(status_code=400, detail="Cannot delete the default address. Please set another address as default first.")
 
-    # Vérifier si l'adresse est utilisée dans des commandes (RESTRICT serait levé par DB, mais pré-vérifions)
-    # Utiliser select(func.count()) pour être efficace
+    # Vérifier si l'adresse est utilisée dans des commandes (gardé)
     order_check_stmt = select(func.count(models.OrderDB.id)).where(
         or_(
             models.OrderDB.delivery_address_id == address_id,
@@ -296,12 +286,20 @@ async def delete_user_address(db: AsyncSession, user_id: int, address_id: int) -
     order_count = order_count_result.scalar_one()
 
     if order_count > 0:
+        logger.warning(f"[CRUD_V3] Tentative de suppression de l'adresse {address_id} utilisée dans {order_count} commandes pour user {user_id}.")
         raise HTTPException(status_code=400, detail=f"Cannot delete address with id {address_id} as it is used in {order_count} existing order(s).")
 
-    # Si tout est OK, supprimer
-    await db.delete(db_address)
-    await db.commit()
-    return True
+    # Si tout est OK, supprimer avec FastCRUD
+    try:
+        # crud_address.delete attend l'ID ou l'objet à supprimer.
+        # Passer l'ID est généralement plus simple si on l'a.
+        await crud_address.delete(db=db, id=address_id)
+        # Pas besoin de commit, géré par get_db_session.
+        logger.info(f"[CRUD_V3] Adresse ID {address_id} supprimée avec succès pour user {user_id}.")
+        return True
+    except Exception as e:
+        logger.error(f"[CRUD_V3] Erreur FastCRUD lors suppression adresse {address_id} pour user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur interne lors de la suppression de l'adresse.")
 
 # --- Get Default Address --- 
 async def get_default_address_for_user(db: AsyncSession, user_id: int) -> Optional[models.AddressDB]:
@@ -320,144 +318,148 @@ async def get_default_address_for_user(db: AsyncSession, user_id: int) -> Option
 
 async def create_category(db: AsyncSession, category_in: models.CategoryCreate) -> models.CategoryDB:
     """Crée une nouvelle catégorie en utilisant SQLAlchemy/FastCRUD."""
-    logger.debug(f"[CRUD_V2] Création catégorie: {category_in.name}")
+    logger.debug(f"[CRUD_V3] Création catégorie: {category_in.name} via FastCRUD")
     try:
         # FastCRUD gère la création
         # Attention à la contrainte UNIQUE sur 'name'
         created_category_db = await crud_category.create(db=db, object=category_in)
-        # Le commit est géré par get_db_session
-        logger.info(f"[CRUD_V2] Catégorie créée avec ID: {created_category_db.id}")
+        # Ajout flush et refresh
+        await db.flush()
+        await db.refresh(created_category_db)
+        logger.info(f"[CRUD_V3] Catégorie créée avec ID: {created_category_db.id}")
         return created_category_db
     except Exception as e:
         # Vérifier si l'erreur est due à la contrainte UNIQUE
         # SQLAlchemy lèvera une IntegrityError (via asyncpg)
         # Note: La détection exacte peut dépendre du driver DB et de SQLAlchemy
         if "UniqueViolationError" in str(e) or "duplicate key value violates unique constraint" in str(e):
-             logger.warning(f"[CRUD_V2] Tentative de création de catégorie échouée (nom déjà existant?): {category_in.name}")
-             raise HTTPException(status_code=409, detail=f"Le nom de catégorie '{category_in.name}' existe déjà.")
+            logger.warning(f"[CRUD_V3] Tentative de création de catégorie échouée (nom déjà existant?): {category_in.name}")
+            raise HTTPException(status_code=409, detail=f"Le nom de catégorie '{category_in.name}' existe déjà.")
         else:
-             logger.error(f"[CRUD_V2] Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
-             # Le rollback est géré par get_db_session
-             raise HTTPException(status_code=500, detail="Erreur interne lors de la création de la catégorie.")
+            logger.error(f"[CRUD_V3] Erreur inattendue lors de la création de la catégorie '{category_in.name}': {e}", exc_info=True)
+            # Le rollback est géré par get_db_session
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la création de la catégorie.")
 
 async def get_category(db: AsyncSession, category_id: int) -> Optional[models.CategoryDB]:
     """Récupère une catégorie par son ID en utilisant FastCRUD."""
-    logger.debug(f"[CRUD_V2] Récupération catégorie ID: {category_id}")
+    logger.debug(f"[CRUD_V3] Récupération catégorie ID: {category_id} via FastCRUD")
     try:
         category_db = await crud_category.get(db=db, id=category_id)
         if not category_db:
-            logger.warning(f"[CRUD_V2] Catégorie ID {category_id} non trouvée.")
+            logger.warning(f"[CRUD_V3] Catégorie ID {category_id} non trouvée.")
             return None
         return category_db
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la récupération de la catégorie ID {category_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la récupération de la catégorie ID {category_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la récupération de la catégorie.")
 
 async def get_all_categories(db: AsyncSession) -> List[models.CategoryDB]:
     """Récupère toutes les catégories en utilisant FastCRUD."""
-    logger.debug(f"[CRUD_V2] Récupération de toutes les catégories")
+    logger.debug(f"[CRUD_V3] Récupération de toutes les catégories via FastCRUD")
     try:
         # Utiliser get_multi pour récupérer toutes les catégories, triées par nom
         categories_result = await crud_category.get_multi(db=db, sort_by="name")
-        logger.debug(f"[CRUD_V2] {len(categories_result.data)} catégories récupérées.")
+        logger.debug(f"[CRUD_V3] {len(categories_result.data)} catégories récupérées.")
         return categories_result.data
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la récupération de toutes les catégories: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la récupération de toutes les catégories: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la récupération des catégories.")
 
 async def get_tag_by_name(db: AsyncSession, name: str) -> Optional[models.TagDB]:
     """Récupère un tag par son nom en utilisant FastCRUD."""
-    logger.debug(f"[CRUD_V2] Recherche tag par nom: {name}")
+    logger.debug(f"[CRUD_V3] Recherche tag par nom: {name}")
     try:
         tag_db = await crud_tag.get_by_field(db=db, field="name", value=name)
         return tag_db # Retourne None si non trouvé
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la recherche du tag '{name}': {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la recherche du tag '{name}': {e}", exc_info=True)
         # Ne pas lever d'HTTPException ici, car utilisé en interne. Laisser remonter l'erreur.
-        raise
+         raise
 
 async def create_tag(db: AsyncSession, tag_in: models.TagCreate) -> models.TagDB:
     """Crée un nouveau tag en utilisant FastCRUD. Gère l'unicité."""
-    logger.debug(f"[CRUD_V2] Tentative de création tag: {tag_in.name}")
+    logger.debug(f"[CRUD_V3] Tentative de création tag: {tag_in.name}")
     try:
         created_tag_db = await crud_tag.create(db=db, object=tag_in)
-        logger.debug(f"[CRUD_V2] Tag '{tag_in.name}' créé avec ID {created_tag_db.id}")
+        logger.debug(f"[CRUD_V3] Tag '{tag_in.name}' créé avec ID {created_tag_db.id}")
         return created_tag_db
     except Exception as e:
          # Vérifier si l'erreur est due à la contrainte UNIQUE
         if "UniqueViolationError" in str(e) or "duplicate key value violates unique constraint" in str(e):
-             logger.warning(f"[CRUD_V2] Tentative de création du tag '{tag_in.name}' qui existe déjà.")
+             logger.warning(f"[CRUD_V3] Tentative de création du tag '{tag_in.name}' qui existe déjà.")
              # Si le tag existe déjà, on le récupère et le retourne
              existing_tag = await get_tag_by_name(db, tag_in.name)
              if existing_tag:
                  return existing_tag
              else:
                  # Situation anormale
-                 logger.error(f"[CRUD_V2] Erreur Integrity lors création tag '{tag_in.name}', mais impossible de le récupérer.")
+                 logger.error(f"[CRUD_V3] Erreur Integrity lors création tag '{tag_in.name}', mais impossible de le récupérer.")
                  raise HTTPException(status_code=500, detail=f"Erreur lors de la création/récupération du tag '{tag_in.name}'.")
         else:
-            logger.error(f"[CRUD_V2] Erreur inattendue lors de la création du tag '{tag_in.name}': {e}", exc_info=True)
+            logger.error(f"[CRUD_V3] Erreur inattendue lors de la création du tag '{tag_in.name}': {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Erreur interne lors de la création du tag.")
 
 # --- CRUD: Products & Variants (Refactorisé - Part 1) ---
 
 async def create_product(db: AsyncSession, product_in: models.ProductCreate) -> models.ProductDB:
     """Crée un nouveau produit de base en utilisant SQLAlchemy/FastCRUD."""
-    logger.debug(f"[CRUD_V2] Création du produit : {product_in.name}")
+    logger.debug(f"[CRUD_V3] Création du produit : {product_in.name} via FastCRUD")
     try:
         created_product_db = await crud_product.create(db=db, object=product_in)
-        logger.info(f"[CRUD_V2] Produit créé avec ID: {created_product_db.id}")
+        # Ajout flush et refresh
+        await db.flush()
+        await db.refresh(created_product_db)
+        logger.info(f"[CRUD_V3] Produit créé avec ID: {created_product_db.id}")
         return created_product_db
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la création du produit '{product_in.name}': {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la création du produit '{product_in.name}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la création du produit.")
 
 async def get_product_variant_by_id(db: AsyncSession, variant_id: int) -> Optional[models.ProductVariantDB]:
     """Récupère une variation par son ID, incluant ses tags (eager loading)."""
-    logger.debug(f"[CRUD_V2] Récupération variant ID {variant_id} avec tags")
+    logger.debug(f"[CRUD_V3] Récupération variant ID {variant_id} via FastCRUD avec tags")
     try:
         # Charger la relation 'tags' en même temps
         options = [selectinload(models.ProductVariantDB.tags)]
         variant_db = await crud_product_variant.get(db=db, id=variant_id, options=options)
         if not variant_db:
-            logger.warning(f"[CRUD_V2] Variation ID {variant_id} non trouvée.")
+            logger.warning(f"[CRUD_V3] Variation ID {variant_id} non trouvée.")
             return None
         return variant_db
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur récupération variant ID {variant_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur FastCRUD get variant ID {variant_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la récupération de la variation.")
 
 async def get_product_variant_by_sku(db: AsyncSession, sku: str) -> Optional[models.ProductVariantDB]:
     """Récupère une variation de produit par son SKU, incluant ses tags (eager loading)."""
-    logger.debug(f"[CRUD_V2] Recherche de la variation SKU: {sku} avec tags")
+    logger.debug(f"[CRUD_V3] Recherche de la variation SKU: {sku} via FastCRUD avec tags")
     try:
         # Charger la relation 'tags' en même temps
         options = [selectinload(models.ProductVariantDB.tags)]
         variant_db = await crud_product_variant.get_by_field(db=db, field="sku", value=sku, options=options)
         if not variant_db:
-            logger.warning(f"[CRUD_V2] Variation SKU {sku} non trouvée.")
+            logger.warning(f"[CRUD_V3] Variation SKU {sku} non trouvée.")
             return None
         return variant_db
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la recherche de la variation SKU {sku}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur FastCRUD get_by_field SKU {sku}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la récupération de la variation.")
 
 # --- CRUD: Stock & Movements (Refactorisé) ---
 
 async def get_stock_for_variant(db: AsyncSession, variant_id: int) -> Optional[models.StockDB]:
     """Récupère l'objet StockDB pour une variation donnée."""
-    logger.debug(f"[CRUD_V2] Vérification du stock pour variant_id: {variant_id}")
+    logger.debug(f"[CRUD_V3] Vérification stock pour variant_id: {variant_id} via FastCRUD")
     try:
         # La PK de StockDB est product_variant_id
         stock_db = await crud_stock.get(db=db, id=variant_id)
-        # crud_stock.get retourne None si non trouvé
         if not stock_db:
-             logger.warning(f"[CRUD_V2] Enregistrement de stock non trouvé pour variant_id {variant_id}")
-             return None
-        logger.debug(f"[CRUD_V2] Stock trouvé pour variant_id {variant_id}: qte={stock_db.quantity}")
+            logger.warning(f"[CRUD_V3] Enregistrement stock non trouvé pour variant_id {variant_id}")
+            return None
+        logger.debug(f"[CRUD_V3] Stock trouvé pour variant_id {variant_id}: qte={stock_db.quantity}")
         return stock_db
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la récupération du stock pour variant {variant_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur FastCRUD get stock pour variant {variant_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la vérification du stock.")
 
 async def update_stock_for_variant(db: AsyncSession, variant_id: int, quantity_change: int) -> models.StockDB:
@@ -509,76 +511,89 @@ async def update_stock_for_variant(db: AsyncSession, variant_id: int, quantity_c
 
 async def record_stock_movement(db: AsyncSession, movement_in: models.StockMovementCreate) -> models.StockMovementDB:
     """Enregistre un mouvement de stock."""
-    logger.debug(f"[CRUD_V2][TX] Enregistrement mouvement stock pour variant_id {movement_in.product_variant_id}, qte: {movement_in.quantity_change}, type: {movement_in.movement_type}")
+    logger.debug(f"[CRUD_V3][TX] Enregistrement mouvement stock: variant={movement_in.product_variant_id}, qty_change={movement_in.quantity_change}, type={movement_in.movement_type}, order_item={movement_in.order_item_id}") # Mise à jour V3
     try:
         created_movement_db = await crud_stock_movement.create(db=db, object=movement_in)
-        logger.debug("[CRUD_V2][TX] Mouvement de stock enregistré.")
+        # Ajout flush et refresh pour s'assurer que l'ID est disponible
+        await db.flush()
+        await db.refresh(created_movement_db)
+        logger.debug(f"[CRUD_V3][TX] Mouvement de stock ID {created_movement_db.id} enregistré.") # Mise à jour V3
         return created_movement_db
     except Exception as e:
-        logger.error(f"[CRUD_V2][TX] Erreur lors de l'enregistrement du mouvement de stock: {e}", exc_info=True)
-        raise
+        logger.error(f"[CRUD_V3][TX] Erreur FastCRUD lors de l'enregistrement du mouvement de stock: {e}", exc_info=True) # Mise à jour V3
+        # Il est important de remonter l'erreur pour que create_order puisse faire un rollback
+        raise # Remonter l'exception
 
 # --- CRUD: Quotes & Quote Items (Refactorisé) ---
 
 async def create_quote(db: AsyncSession, user_id: int, quote_in: models.QuoteCreate) -> models.QuoteDB:
-    """Crée un nouveau devis avec ses lignes."""
-    logger.debug(f"[CRUD_V2] Création d'un devis pour user_id: {user_id} avec {len(quote_in.items)} items")
+    """Crée un nouveau devis avec ses lignes, utilisant FastCRUD pour la récupération."""
+    # logger.debug(f"[CRUD_V2] Création d'un devis pour user_id: {user_id} avec {len(quote_in.items)} items")
+    logger.debug(f"[CRUD_V3] Création devis user {user_id} ({len(quote_in.items)} items) - Utilisation FastCRUD pour lookup variants") # Mise à jour V3
 
-    # Vérifier que l'utilisateur existe
+    # Vérifier que l'utilisateur existe (utilise get_user_by_id déjà refactorisé)
     user = await get_user_by_id(db, user_id)
     if not user:
+        logger.warning(f"[CRUD_V3] Utilisateur {user_id} non trouvé pour création devis.")
         raise HTTPException(status_code=404, detail=f"Utilisateur ID {user_id} non trouvé.")
 
+    # Préparer récupération des variants
     items_data_to_insert = []
-    variant_ids = [item.product_variant_id for item in quote_in.items]
+    variant_ids = [item.product_variant_id for item in quote_in.items if item.product_variant_id is not None] # Exclure None au cas où
     variants_map: Dict[int, models.ProductVariantDB] = {}
 
     try:
-        # 1. Récupérer toutes les variations nécessaires en une seule fois
+        # 1. Récupérer toutes les variations nécessaires en une seule fois avec FastCRUD
         if variant_ids:
-            stmt = select(models.ProductVariantDB).where(models.ProductVariantDB.id.in_(variant_ids))
-            result = await db.execute(stmt)
-            existing_variants = result.scalars().all()
+            logger.debug(f"[CRUD_V3] Récupération variants via FastCRUD: {variant_ids}")
+            # Utiliser get_multi avec un filtre 'id__in'
+            variants_result = await crud_product_variant.get_multi(
+                db=db,
+                filter={"id__in": variant_ids} # Syntaxe FastCRUD pour IN
+            )
+            existing_variants = variants_result.data
             variants_map = {v.id: v for v in existing_variants}
+            logger.debug(f"[CRUD_V3] {len(variants_map)} variants trouvés.")
 
-        # 2. Vérifier l'existence et préparer les données des items
+        # 2. Vérifier l'existence et préparer les données des items (inchangé)
         for item in quote_in.items:
             variant = variants_map.get(item.product_variant_id)
             if not variant:
-                logger.error(f"[CRUD_V2][TX] Variation ID {item.product_variant_id} non trouvée pour le devis.")
+                # logger.error(f"[CRUD_V2][TX] Variation ID {item.product_variant_id} non trouvée pour le devis.")
+                logger.error(f"[CRUD_V3] Variation ID {item.product_variant_id} non trouvée dans le lookup FastCRUD.") # Mise à jour V3
                 raise HTTPException(status_code=404, detail=f"Variation produit ID {item.product_variant_id} non trouvée.")
-
+                
             items_data_to_insert.append({
                 "product_variant_id": variant.id,
                 "quantity": item.quantity,
                 "price_at_quote": variant.price # Utiliser le prix actuel
             })
 
-        # 3. Créer l'en-tête du devis (QuoteDB)
-        # Préparer les données, exclure 'items' du modèle Pydantic
+        # 3. Créer l'en-tête du devis (QuoteDB) (inchangé - gestion manuelle via SQLAlchemy)
         quote_header_data = quote_in.model_dump(exclude={'items'})
-        quote_header_data['user_id'] = user_id # Assurer que user_id est inclus
+        quote_header_data['user_id'] = user_id
         new_quote_db = models.QuoteDB(**quote_header_data)
 
-        # 4. Créer les objets QuoteItemDB et les lier au QuoteDB
+        # 4. Créer les objets QuoteItemDB et les lier au QuoteDB (inchangé)
         for item_data in items_data_to_insert:
              new_quote_db.items.append(models.QuoteItemDB(**item_data))
-             # La relation back_populates devrait lier item.quote = new_quote_db
 
-        # 5. Ajouter le devis (et ses items via cascade) à la session
+        # 5. Ajouter le devis (et ses items via cascade) à la session (inchangé)
         db.add(new_quote_db)
-        await db.flush() # Pour obtenir l'ID du devis et des items si nécessaire
-        await db.refresh(new_quote_db, attribute_names=['items']) # Rafraîchir pour charger les items liés
+        await db.flush() 
+        await db.refresh(new_quote_db, attribute_names=['items']) 
 
-        logger.info(f"[CRUD_V2] Devis ID {new_quote_db.id} créé avec succès pour user_id {user_id}.")
+        # logger.info(f"[CRUD_V2] Devis ID {new_quote_db.id} créé avec succès pour user_id {user_id}.")
+        logger.info(f"[CRUD_V3] Devis ID {new_quote_db.id} créé avec succès pour user_id {user_id}.") # Mise à jour V3
         # Le commit est géré par get_db_session
 
         return new_quote_db
 
     except HTTPException as http_exc:
-         raise http_exc # Remonter les erreurs 404
+         raise http_exc # Remonter les erreurs 404/409 etc.
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la création du devis pour user {user_id}: {e}", exc_info=True)
+        # logger.error(f"[CRUD_V2] Erreur lors de la création du devis pour user {user_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur inattendue lors de la création du devis pour user {user_id}: {e}", exc_info=True) # Mise à jour V3
         # Le rollback est géré par get_db_session
         raise HTTPException(status_code=500, detail="Erreur interne lors de la création du devis.")
 
@@ -595,7 +610,7 @@ async def get_quote_by_id(db: AsyncSession, quote_id: int) -> Optional[models.Qu
 
         if not quote_db:
             logger.warning(f"[CRUD_V2] Devis ID {quote_id} non trouvé.")
-            return None
+                return None
 
         logger.debug(f"[CRUD_V2] Devis ID {quote_id} récupéré avec {len(quote_db.items)} lignes.")
         return quote_db
@@ -625,10 +640,10 @@ async def list_user_quotes(db: AsyncSession, user_id: int, limit: int = 20, offs
 
 async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> models.QuoteDB:
     """Met à jour le statut d'un devis."""
-    logger.debug(f"[CRUD_V2] Mise à jour statut devis ID: {quote_id} -> {status}")
+    logger.debug(f"[CRUD_V3] Mise à jour statut devis ID: {quote_id} -> {status}")
     allowed_statuses = ['pending', 'accepted', 'rejected', 'expired'] # Exemple
     if status not in allowed_statuses:
-        logger.error(f"[CRUD_V2] Statut invalide '{status}' pour mise à jour devis.")
+        logger.error(f"[CRUD_V3] Statut invalide '{status}' pour mise à jour devis.")
         raise HTTPException(status_code=400, detail=f"Statut invalide. Doit être l'un de: {', '.join(allowed_statuses)}")
 
     try:
@@ -644,11 +659,11 @@ async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> m
         updated_id = result.scalar_one_or_none()
 
         if updated_id is None:
-            logger.warning(f"[CRUD_V2] Devis ID {quote_id} non trouvé pour mise à jour statut.")
-            raise HTTPException(status_code=404, detail=f"Devis ID {quote_id} non trouvé.")
-
+            logger.warning(f"[CRUD_V3] Devis ID {quote_id} non trouvé pour mise à jour statut.")
+                raise HTTPException(status_code=404, detail=f"Devis ID {quote_id} non trouvé.")
+                
         # Le commit est géré par get_db_session
-        logger.info(f"[CRUD_V2] Statut du devis ID {quote_id} mis à jour à '{status}'.")
+        logger.info(f"[CRUD_V3] Statut du devis ID {quote_id} mis à jour à '{status}'.")
 
         # Recharger le devis pour retourner l'état complet mis à jour
         updated_quote = await get_quote_by_id(db, quote_id)
@@ -659,7 +674,7 @@ async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> m
     except HTTPException as http_exc:
          raise http_exc # Remonter 400 ou 404
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la mise à jour du statut du devis {quote_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la mise à jour du statut du devis {quote_id}: {e}", exc_info=True)
         # Le rollback est géré par get_db_session
         raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour du statut du devis.")
 
@@ -667,120 +682,137 @@ async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> m
 
 async def create_order(db: AsyncSession, user_id: int, order_in: models.OrderCreate) -> models.OrderDB:
     """Crée une nouvelle commande, met à jour le stock et enregistre les mouvements."""
-    logger.debug(f"[CRUD_V2] Création de commande pour user_id: {user_id} avec {len(order_in.items)} items")
+    # logger.debug(f"[CRUD_V2] Création de commande pour user_id: {user_id} avec {len(order_in.items)} items")
+    logger.debug(f"[CRUD_V3][TX] Démarrage création commande pour user_id: {user_id} ({len(order_in.items)} items)")
 
-    # 1. Vérifier existence utilisateur et adresses
-    user = await get_user_by_id(db, user_id)
+    # 1. Vérifier existence utilisateur et adresses via FastCRUD / helpers
+    user = await get_user_by_id(db, user_id) # Utilise déjà FastCRUD get
     if not user:
-         raise HTTPException(status_code=404, detail=f"Utilisateur ID {user_id} non trouvé.")
-    # Utiliser get_address_by_id refactorisé
-    delivery_address = await get_address_by_id(db, order_in.delivery_address_id, user_id=user_id)
-    if not delivery_address:
-         raise HTTPException(status_code=404, detail=f"Adresse de livraison ID {order_in.delivery_address_id} invalide.")
-    billing_address = await get_address_by_id(db, order_in.billing_address_id, user_id=user_id)
-    if not billing_address:
-         raise HTTPException(status_code=404, detail=f"Adresse de facturation ID {order_in.billing_address_id} invalide.")
+        logger.warning(f"[CRUD_V3][TX] Utilisateur ID {user_id} non trouvé.")
+        raise HTTPException(status_code=404, detail=f"Utilisateur ID {user_id} non trouvé.")
+
+    # Utiliser get_address_by_id (qui utilise db.get, équivalent à crud_address.get)
+    delivery_address = await get_address_by_id(db, order_in.delivery_address_id)
+    if not delivery_address or delivery_address.user_id != user_id:
+        logger.warning(f"[CRUD_V3][TX] Adresse livraison ID {order_in.delivery_address_id} invalide pour user {user_id}.")
+        raise HTTPException(status_code=404, detail=f"Adresse de livraison ID {order_in.delivery_address_id} invalide.")
+    billing_address = await get_address_by_id(db, order_in.billing_address_id)
+    if not billing_address or billing_address.user_id != user_id:
+        logger.warning(f"[CRUD_V3][TX] Adresse facturation ID {order_in.billing_address_id} invalide pour user {user_id}.")
+        raise HTTPException(status_code=404, detail=f"Adresse de facturation ID {order_in.billing_address_id} invalide.")
 
     items_data_to_process = []
-    variant_ids = [item.product_variant_id for item in order_in.items]
+    variant_ids = [item.product_variant_id for item in order_in.items if item.product_variant_id is not None]
     variants_map: Dict[int, models.ProductVariantDB] = {}
     calculated_total = Decimal(0)
 
     try:
-        # 2. Récupérer variations et vérifier stock
+        # 2. Récupérer variations via FastCRUD et vérifier stock
         if variant_ids:
-            stmt = select(models.ProductVariantDB).where(models.ProductVariantDB.id.in_(variant_ids))
-            result = await db.execute(stmt)
-            existing_variants = result.scalars().all()
+            logger.debug(f"[CRUD_V3][TX] Récupération variants via FastCRUD: {variant_ids}")
+            variants_result = await crud_product_variant.get_multi(
+                db=db,
+                filter={"id__in": variant_ids}
+            )
+            existing_variants = variants_result.data
             variants_map = {v.id: v for v in existing_variants}
+            logger.debug(f"[CRUD_V3][TX] {len(variants_map)} variants trouvés.")
 
         for item in order_in.items:
             variant = variants_map.get(item.product_variant_id)
             if not variant:
-                raise HTTPException(status_code=404, detail=f"Variation produit ID {item.product_variant_id} non trouvée.")
-
-            # Vérification du stock (avant la boucle de mise à jour pour info rapide, mais la vraie vérif atomique est dans update_stock)
+                 logger.error(f"[CRUD_V3][TX] Variation ID {item.product_variant_id} non trouvée dans lookup FastCRUD.")
+                 raise HTTPException(status_code=404, detail=f"Variation produit ID {item.product_variant_id} non trouvée.")
+            
+            # Vérification du stock (inchangé - utilise get_stock_for_variant)
             stock_info = await get_stock_for_variant(db, variant.id)
             current_stock = stock_info.quantity if stock_info else 0
             if current_stock < item.quantity:
-                 logger.warning(f"[CRUD_V2][TX] Stock insuffisant (pré-vérif) pour variant_id {variant.id} (demandé: {item.quantity}, dispo: {current_stock})")
+                 logger.warning(f"[CRUD_V3][TX] Stock insuffisant (pré-vérif) pour variant_id {variant.id} (demandé: {item.quantity}, dispo: {current_stock})")
                  raise HTTPException(status_code=409, detail=f"Stock insuffisant pour le produit SKU {variant.sku}. Disponible: {current_stock}")
 
             price = variant.price
             items_data_to_process.append({
                 "variant_id": variant.id,
+                "sku": variant.sku, # Ajouter SKU pour log
                 "quantity": item.quantity,
                 "price_at_order": price
             })
             calculated_total += (price * item.quantity)
         
-        # Vérifier total (optionnel, dépend de la confiance dans le front-end)
+        # Vérifier total (inchangé)
         if calculated_total != order_in.total_amount:
-             logger.warning(f"[CRUD_V2][TX] Incohérence de montant total (calculé: {calculated_total}, fourni: {order_in.total_amount}) - Utilisation du montant calculé.")
+             logger.warning(f"[CRUD_V3][TX] Incohérence de montant total (calculé: {calculated_total}, fourni: {order_in.total_amount}) - Utilisation du montant calculé.")
              final_total_amount = calculated_total
         else:
              final_total_amount = order_in.total_amount
         
-        logger.debug(f"[CRUD_V2][TX] Stock vérifié, total calculé: {final_total_amount}")
+        logger.debug(f"[CRUD_V3][TX] Vérifications OK. Total: {final_total_amount}. Création commande...")
 
-        # 3. Créer l'en-tête de commande
+        # 3. Créer l'en-tête de commande (inchangé - SQLAlchemy manuel)
         order_header_data = order_in.model_dump(exclude={'items'})
         order_header_data['user_id'] = user_id
-        order_header_data['total_amount'] = final_total_amount # Utiliser le total vérifié/calculé
+        order_header_data['total_amount'] = final_total_amount
         new_order_db = models.OrderDB(**order_header_data)
         db.add(new_order_db)
-        await db.flush() # Obtenir l'ID de la commande pour les items
+        await db.flush() # Obtenir l'ID de la commande
+        logger.debug(f"[CRUD_V3][TX] En-tête commande ID {new_order_db.id} créé (flush). Création items...")
 
-        # 4. Créer OrderItems, MAJ Stock, créer StockMovements
-        created_order_items_db = []
+        # 4. Créer OrderItems, MAJ Stock, créer StockMovements (logique inchangée)
+        # created_order_items_db = [] # Liste non utilisée, on peut simplifier
         for item_data in items_data_to_process:
-             # 4a. Créer Order Item
-             order_item_db = models.OrderItemDB(
-                 order_id=new_order_db.id,
-                 product_variant_id=item_data["variant_id"],
-                 quantity=item_data["quantity"],
-                 price_at_order=item_data["price_at_order"]
-             )
-             db.add(order_item_db)
-             await db.flush() # Obtenir l'ID de l'order item pour le stock movement
-             created_order_items_db.append(order_item_db) # Garder l'objet DB
+            logger.debug(f"[CRUD_V3][TX] Traitement item: variant={item_data['variant_id']}, qty={item_data['quantity']}")
+            # 4a. Créer Order Item (SQLAlchemy manuel)
+            order_item_db = models.OrderItemDB(
+                order_id=new_order_db.id,
+                product_variant_id=item_data["variant_id"],
+                quantity=item_data["quantity"],
+                price_at_order=item_data["price_at_order"]
+            )
+            db.add(order_item_db)
+            await db.flush() # Obtenir l'ID de l'order item
+            # created_order_items_db.append(order_item_db)
+            logger.debug(f"[CRUD_V3][TX] OrderItem ID {order_item_db.id} créé (flush). Mise à jour stock...")
 
-             # 4b. Mettre à jour le stock (utilise la fonction refactorisée qui lève une erreur si stock < 0)
-             # Cette opération est critique et atomique grâce à la requête UPDATE.
-             try:
-                  await update_stock_for_variant(db, item_data["variant_id"], -item_data["quantity"])
-             except HTTPException as stock_error:
-                  # Si update_stock_for_variant lève HTTPException (409 pour stock insuffisant), remonter l'erreur.
-                  # Le rollback sera géré par get_db_session.
-                  logger.error(f"[CRUD_V2][TX] Échec mise à jour stock pour variant {item_data['variant_id']}: {stock_error.detail}")
-                  raise stock_error # Remonte l'erreur (probablement 409)
-             
-             # 4c. Enregistrer le mouvement de stock
-             movement_data = models.StockMovementCreate(
-                 product_variant_id=item_data["variant_id"],
-                 quantity_change=-item_data["quantity"],
-                 movement_type='order_fulfillment',
-                 order_item_id=order_item_db.id # Lier au OrderItem créé
-             )
-             await record_stock_movement(db, movement_data) # Utilise la fonction refactorisée
+            # 4b. Mettre à jour le stock (inchangé - utilise update_stock_for_variant)
+            try:
+                 # update_stock_for_variant lève ValueError puis HTTPException(409) si stock insuffisant
+                 await update_stock_for_variant(db, item_data["variant_id"], -item_data["quantity"])
+                 logger.debug(f"[CRUD_V3][TX] Stock mis à jour pour variant {item_data['variant_id']}. Enregistrement mouvement...")
+            except HTTPException as stock_error:
+                 # Remonter l'erreur pour rollback global
+                 logger.error(f"[CRUD_V3][TX] Échec MAJ stock (HTTPException) pour variant {item_data['variant_id']}: {stock_error.detail}")
+                 raise stock_error
+            except ValueError as stock_error_val: # Capturer ValueError aussi
+                 logger.error(f"[CRUD_V3][TX] Échec MAJ stock (ValueError) pour variant {item_data['variant_id']}: {stock_error_val}")
+                 raise HTTPException(status_code=409, detail=str(stock_error_val)) # Transformer en HTTPException
+                 
+            # 4c. Enregistrer le mouvement de stock (utilise record_stock_movement refactorisé)
+            movement_data = models.StockMovementCreate(
+                product_variant_id=item_data["variant_id"],
+                quantity_change=-item_data["quantity"],
+                movement_type='order_fulfillment',
+                order_item_id=order_item_db.id # Lier au OrderItem créé
+            )
+            await record_stock_movement(db, movement_data)
+            logger.debug(f"[CRUD_V3][TX] Mouvement stock enregistré pour OrderItem {order_item_db.id}.")
 
-        # Associer les items créés à l'objet OrderDB principal (si non fait par back_populates/cascade)
-        # Normalement, l'ajout des OrderItemDB avec l'order_id correct suffit.
-        # Mais on peut rafraîchir pour être sûr.
+        # 5. Rafraîchir la commande complète (inchangé)
+        logger.debug(f"[CRUD_V3][TX] Tous items traités. Refresh commande ID {new_order_db.id}...")
         await db.refresh(new_order_db, attribute_names=['items', 'user', 'delivery_address', 'billing_address'])
 
-        logger.info(f"[CRUD_V2] Commande ID {new_order_db.id} créée avec succès pour user_id {user_id}.")
-        # Le commit est géré par get_db_session
+        logger.info(f"[CRUD_V3][TX] Commande ID {new_order_db.id} créée avec succès pour user_id {user_id}.")
+        # Le commit sera fait par get_db_session si aucune exception n'est levée
 
         return new_order_db
 
     except HTTPException as http_exc:
-         # Le rollback est géré par get_db_session si l'exception remonte jusque là
-         logger.warning(f"[CRUD_V2] HTTP Exception pendant création commande: {http_exc.detail}")
+         logger.warning(f"[CRUD_V3][TX] HTTP Exception durant création commande: {http_exc.status_code} - {http_exc.detail}")
+         # Le rollback sera fait par get_db_session
          raise http_exc
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur pendant la création de la commande pour user {user_id}: {e}", exc_info=True)
-        # Le rollback est géré par get_db_session
+        logger.error(f"[CRUD_V3][TX] Erreur inattendue pendant création commande pour user {user_id}: {e}", exc_info=True)
+        # Le rollback sera fait par get_db_session
         raise HTTPException(status_code=500, detail="Erreur interne lors de la création de la commande.")
 
 async def get_order_by_id(db: AsyncSession, order_id: int) -> Optional[models.OrderDB]:
@@ -797,8 +829,8 @@ async def get_order_by_id(db: AsyncSession, order_id: int) -> Optional[models.Or
 
         if not order_db:
             logger.warning(f"[CRUD_V2] Commande ID {order_id} non trouvée.")
-            return None
-
+                return None
+                
         logger.debug(f"[CRUD_V2] Commande ID {order_id} récupérée avec {len(order_db.items)} lignes.")
         return order_db
 
@@ -825,10 +857,10 @@ async def list_user_orders(db: AsyncSession, user_id: int, limit: int = 20, offs
 
 async def update_order_status(db: AsyncSession, order_id: int, status: str) -> models.OrderDB:
     """Met à jour le statut d'une commande."""
-    logger.debug(f"[CRUD_V2] Mise à jour statut commande ID: {order_id} -> {status}")
-    allowed_statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+    logger.debug(f"[CRUD_V3] Mise à jour statut commande ID: {order_id} -> {status}")
+    allowed_statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'] 
     if status not in allowed_statuses:
-        logger.error(f"[CRUD_V2] Statut invalide '{status}' pour mise à jour commande.")
+        logger.error(f"[CRUD_V3] Statut invalide '{status}' pour mise à jour commande.")
         raise HTTPException(status_code=400, detail=f"Statut invalide. Doit être l'un de: {', '.join(allowed_statuses)}")
 
     try:
@@ -842,10 +874,10 @@ async def update_order_status(db: AsyncSession, order_id: int, status: str) -> m
         updated_id = result.scalar_one_or_none()
 
         if updated_id is None:
-            logger.warning(f"[CRUD_V2] Commande ID {order_id} non trouvée pour mise à jour statut.")
-            raise HTTPException(status_code=404, detail=f"Commande ID {order_id} non trouvée.")
-
-        logger.info(f"[CRUD_V2] Statut de la commande ID {order_id} mis à jour à '{status}'.")
+            logger.warning(f"[CRUD_V3] Commande ID {order_id} non trouvée pour mise à jour statut.")
+                raise HTTPException(status_code=404, detail=f"Commande ID {order_id} non trouvée.")
+                
+        logger.info(f"[CRUD_V3] Statut de la commande ID {order_id} mis à jour à '{status}'.")
 
         # Recharger la commande pour retourner l'état complet
         updated_order = await get_order_by_id(db, order_id)
@@ -856,5 +888,124 @@ async def update_order_status(db: AsyncSession, order_id: int, status: str) -> m
     except HTTPException as http_exc:
          raise http_exc
     except Exception as e:
-        logger.error(f"[CRUD_V2] Erreur lors de la mise à jour du statut de la commande {order_id}: {e}", exc_info=True)
+        logger.error(f"[CRUD_V3] Erreur lors de la mise à jour du statut de la commande {order_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour du statut de la commande.")
+
+# --- Fonctions pour list_products (avec jointures/filtres complexes) --- 
+
+# Note: Ces fonctions restent en SQLAlchemy "manuel" car les filtres 
+# (tags many-to-many, search multi-tables) sont trop complexes pour le 
+# système de filtre standard de FastCRUD.
+
+async def _build_product_list_query(
+    db: AsyncSession, 
+    category_id: Optional[int] = None, 
+    tag_names: Optional[List[str]] = None,
+    search_term: Optional[str] = None
+):
+    """Helper pour construire la requête de base (select + joins + filters)."""
+    # Sélectionne le produit principal
+    stmt = future_select(models.ProductDB)
+    
+    # Joindre systématiquement avec les variations car on en a besoin pour les filtres/infos
+    stmt = stmt.join(models.ProductDB.variants)
+    
+    # Filtrer par catégorie si fournie
+    if category_id is not None:
+        stmt = stmt.where(models.ProductDB.category_id == category_id)
+        
+    # Filtrer par tags si fournis (jointure et filtre ANY)
+    if tag_names:
+        # Joindre avec la table d'association et les tags
+        stmt = stmt.join(models.ProductVariantDB.tags)
+        # Filtrer où le nom du tag est dans la liste fournie
+        stmt = stmt.where(models.TagDB.name.in_(tag_names))
+        
+    # Filtrer par terme de recherche (ILIKE sur plusieurs champs)
+    if search_term:
+        search_pattern = f"%{search_term}%"
+        stmt = stmt.where(
+            or_(
+                models.ProductDB.name.ilike(search_pattern),
+                models.ProductDB.description.ilike(search_pattern),
+                models.ProductVariantDB.sku.ilike(search_pattern),
+                # Ajouter la recherche sur variant.attribute_description si ce champ existe
+                # cast(models.ProductVariantDB.attributes ->> 'description', SQLString).ilike(search_pattern) # Exemple pour JSONB
+            )
+        )
+        
+    # Assurer qu'on retourne des produits distincts
+    stmt = stmt.distinct()
+    
+    return stmt
+
+async def count_products_with_variants(
+    db: AsyncSession, 
+    category_id: Optional[int] = None, 
+    tag_names: Optional[List[str]] = None,
+    search_term: Optional[str] = None
+) -> int:
+    """Compte les produits correspondant aux filtres."""
+    logger.debug(f"[CRUD_V3] Comptage produits avec filtres: cat={category_id}, tags={tag_names}, search={search_term}")
+    try:
+        # Construire la requête de base avec filtres
+        base_query = await _build_product_list_query(
+            db=db, 
+            category_id=category_id, 
+            tag_names=tag_names,
+            search_term=search_term
+        )
+        
+        # Transformer la requête pour compter les ID uniques de ProductDB
+        count_query = future_select(sql_func.count(distinct(models.ProductDB.id)))
+        count_query = count_query.select_from(base_query.subquery()) # Appliquer les filtres en comptant depuis la sous-requête
+        
+        # Exécuter la requête de comptage
+        result = await db.execute(count_query)
+        total_count = result.scalar_one_or_none() or 0
+        logger.debug(f"[CRUD_V3] Total produits trouvés: {total_count}")
+        return total_count
+    except Exception as e:
+        logger.error(f"[CRUD_V3] Erreur lors du comptage des produits: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur interne lors du comptage des produits.")
+
+async def list_products_with_variants(
+    db: AsyncSession, 
+    limit: int = 100, 
+    offset: int = 0, 
+    category_id: Optional[int] = None, 
+    tag_names: Optional[List[str]] = None, 
+    search_term: Optional[str] = None
+) -> List[models.ProductDB]:
+    """Liste les produits avec variations, appliquant filtres et pagination."""
+    logger.debug(f"[CRUD_V3] Listage produits avec filtres: cat={category_id}, tags={tag_names}, search={search_term}, limit={limit}, offset={offset}")
+    try:
+        # Construire la requête de base avec filtres
+        stmt = await _build_product_list_query(
+            db=db, 
+            category_id=category_id, 
+            tag_names=tag_names,
+            search_term=search_term
+        )
+        
+        # Ajouter le chargement Eager des variations et de leurs tags
+        stmt = stmt.options(
+            selectinload(models.ProductDB.variants).selectinload(models.ProductVariantDB.tags)
+        )
+        
+        # Ajouter l'ordre (important pour une pagination cohérente)
+        stmt = stmt.order_by(models.ProductDB.id) # Ou un autre champ pertinent
+        
+        # Appliquer la pagination
+        stmt = stmt.offset(offset).limit(limit)
+        
+        # Exécuter la requête
+        result = await db.execute(stmt)
+        # .unique() est important après distinct() + selectinload pour éviter les doublons en mémoire dus aux jointures
+        products_db = list(result.unique().scalars().all())
+        
+        logger.debug(f"[CRUD_V3] {len(products_db)} produits récupérés pour la page.")
+        return products_db
+    except Exception as e:
+        logger.error(f"[CRUD_V3] Erreur lors du listage des produits: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur interne lors du listage des produits.")
