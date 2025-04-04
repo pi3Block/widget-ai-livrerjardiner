@@ -1,117 +1,124 @@
-Voici une **roadmap** claire et structurée pour résumer les étapes nécessaires à l’intégration de 1000 références dans l’application `livrerjardiner.fr`, la gestion intelligente du stock, et l’optimisation de l’agent IA. Ce résumé est conçu pour être facilement compris et suivi par un LLM ou une équipe technique. Il inclut les étapes déjà réalisées et celles à venir, avec des objectifs, des actions, et des points d’attention.
+Voici une **roadmap** claire et structurée pour résumer les étapes nécessaires à l'intégration de 1000 références dans l'application `livrerjardiner.fr`, la gestion intelligente du stock, et l'optimisation de l'agent IA. Ce résumé est conçu pour être facilement compris et suivi par un LLM ou une équipe technique. Il inclut les étapes déjà réalisées et celles à venir, avec des objectifs, des actions, et des points d'attention.
 
 ---
 
-## Roadmap : Intégration de 1000 références et gestion intelligente du stock pour `livrerjardiner.fr`
+## Roadmap : Intégration de 1000 références, gestion intelligente du stock et fonctionnalités avancées pour `livrerjardiner.fr`
 
 ### Objectif global
-- Intégrer 1000 références de produits de jardinage dans l’application `livrerjardiner.fr`.
-- Mettre en place une gestion intelligente du stock (alertes, historique, réapprovisionnement).
-- Optimiser l’agent IA pour qu’il reste efficace avec un grand nombre de références.
+- Intégrer 1000 références de produits de jardinage (avec variations) dans l'application `livrerjardiner.fr`.
+- Gérer des comptes utilisateurs complets (profil, adresses, historique).
+- Permettre des commandes multi-produits.
+- Mettre en place une gestion intelligente du stock par variation de produit (alertes, historique, réapprovisionnement).
+- Améliorer la recherche et le filtrage via des catégories et tags.
+- Optimiser l'agent IA pour qu'il gère efficacement les variations et les commandes complexes.
 
 ### Contexte
-- Base de données : PostgreSQL avec des tables existantes (`stock`, `orders`, `pending_orders`).
+- Base de données : PostgreSQL avec migration prévue vers une structure relationnelle plus complexe.
 - Backend : FastAPI avec deux LLMs (Mistral et LLaMA 3 via Ollama).
 - Frontend : React.
 - Serveur : `piair@piairBig`.
-- 1000 références à gérer, avec images (initialement via BLOB, mais possibilité de passer à des URLs).
+- Besoin de gérer 1000 produits de base, chacun pouvant avoir plusieurs variations (taille, couleur...) avec stock et prix spécifiques.
 
 ---
 
 ## Étapes réalisées
 
-### 1. Mise à jour de la structure de la base de données
-- **Objectif** : Adapter la base de données pour gérer 1000 références avec une relation entre `products` et `stock`.
+### 1. Initialisation et Base de Données V1
+- **Objectif** : Mettre en place la structure initiale (simplifiée) de la base de données.
 - **Actions réalisées** :
-  - Création de la table `products` pour stocker les informations des produits (référence, nom, description, catégorie, prix, image).
-  - Mise à jour de la table `stock` pour utiliser une clé étrangère `product_id` (référencée à `products(id)`) au lieu de la colonne `item`.
-  - Migration des données existantes de `stock.item` vers `products` et mise à jour de `stock.product_id`.
-  - Mise à jour des tables `orders` et `pending_orders` pour utiliser `product_id` au lieu de `item`.
-  - Ajout d’une table `stock_movements` pour suivre l’historique des mouvements de stock.
-  - Résolution des problèmes de permissions (`must be owner of table stock`) en changeant le propriétaire des tables à `monuser`.
-  - Résolution des erreurs de `NULL` dans `product_id` en ajoutant les produits manquants dans `products`.
-- **Résultat** : Base de données relationnelle prête à gérer 1000 références avec des relations cohérentes.
+  - Création des tables initiales (`stock`, `orders`, `pending_orders` basées sur `item`).
+  - Mise en place du backend FastAPI initial.
+- **Résultat** : Une première version fonctionnelle mais limitée.
 
-### 2. Gestion des images
-- **Objectif** : Ajouter un espace pour gérer les images des produits.
+### 2. Adaptation pour Relations Produits/Stock (V2)
+- **Objectif** : Introduire une table `products` et lier le stock.
 - **Actions réalisées** :
-  - Initialement, ajout d’une colonne `image url` dans `products` pour stocker les urls des images.
-  - Mise à jour de l’endpoint `/products` pour renvoyer les images.
-  - Mise à jour du frontend React pour afficher les images via des URLs.
-- **Résultat** : Les images des produits sont stockées et affichées.
+  - Création de la table `products` (simplifiée, sans variations).
+  - Mise à jour de `stock`, `orders`, `pending_orders` pour utiliser `product_id` (FK vers `products.id`).
+  - Ajout de `stock_movements` pour l'historique.
+  - Adaptation initiale du backend (`models.py`, `crud.py`, `main.py`) pour ces changements.
+- **Résultat** : Base de données relationnelle mais ne gérant pas encore les variations, les utilisateurs complets ou les commandes multi-produits.
 
 ---
 
 ## Étapes à venir
 
-### 4. Optimisation des performances
-- **Objectif** : Assurer que l’application reste rapide et réactive avec 1000 références.
-- **Actions à réaliser** :
-  - **Ajouter un cache avec Redis** :
-    - Installer Redis sur le serveur (`sudo apt install redis-server`).
-    - Mettre à jour `check_stock` pour utiliser Redis comme cache (stocker le stock pendant 5 minutes).
-    - Invalider le cache dans `save_order` après une mise à jour du stock.
-  - **Optimiser les images** :
-    - Créer un endpoint séparé `/product/{reference}/image` pour charger les images à la demande (lazy loading).
+### 3. Refonte Majeure de la Base de Données et Adaptation du Backend (V3)
+- **Objectif** : Adapter la base de données et le backend pour supporter les commandes multi-produits, la gestion des utilisateurs, les variations de produits, et une catégorisation/tagging avancée.
+- **Statut** : **TERMINÉ** (sauf logique avancée du Chat V3)
+- **Actions réalisées** :
+    - Structure Base de Données (SQL V3) : **FAIT**
+    - Adaptation Backend :
+        - Modèles Pydantic (`models.py`) : **FAIT**
+        - Réécriture/Adaptation CRUD (`crud.py`) : **FAIT**
+        - Mise à jour des endpoints FastAPI (`main.py`) : **FAIT** (sauf logique avancée `/chat`)
+        - Adaptation basique logique LLM (Prompts) : **FAIT**
 
-### 5. Test complet de l’application
-- **Objectif** : Vérifier que tout fonctionne correctement après les modifications.
+### 4. Optimisation des Performances
+- **Objectif** : Assurer que l'application reste rapide et réactive avec la nouvelle structure et 1000+ variations.
+- **Statut** : **À faire**
 - **Actions à réaliser** :
-  - Tester l’endpoint `/products` pour vérifier que les produits et leurs images s’affichent correctement.
-  - Tester l’endpoint `/chat` pour s’assurer que l’agent IA répond correctement (ex. : "10 ROS-001").
-  - Tester une commande via `/order` et vérifier que le stock est mis à jour et que le mouvement est enregistré dans `stock_movements`.
-  - Tester le frontend pour confirmer que les produits, images, et commandes fonctionnent.
-  - Vérifier les logs FastAPI pour détecter d’éventuelles erreurs (`journalctl -u fastapi.service`).
-- **Points d’attention** :
-  - S’assurer que les images s’affichent correctement dans le frontend.
-  - Vérifier que le stock est bien mis à jour après une commande.
+    - Cache Redis
+    - Optimisation des Requêtes SQL
+    - Optimisation des Images
 
-### 6. Ajout de fonctionnalités avancées
-- **Objectif** : Améliorer l’expérience utilisateur et la gestion.
+### 5. Test Complet de l'Application
+- **Objectif** : Vérifier que tout fonctionne correctement après la refonte majeure V3.
+- **Statut** : **[En cours]**
 - **Actions à réaliser** :
-  - **Interface d’administration** :
-    - Créer un tableau de bord pour lister les produits, voir les stocks, et réapprovisionner via l’endpoint `/restock`.
-    - Ajouter des alertes visuelles pour les stocks bas (basées sur `stock_alert_threshold`).
-  - **Recherche avancée** :
-    - Ajouter un paramètre `search` à l’endpoint `/products` pour une recherche floue (`LIKE` ou Elasticsearch).
-    - Mettre à jour le frontend avec un champ de recherche.
-  - **Recommandations** :
-    - Ajouter des suggestions de produits complémentaires (ex. : "Vous avez acheté des rosiers, voulez-vous de l’engrais ?").
-- **Points d’attention** :
-  - Sécuriser l’interface d’administration avec une authentification (ex. : JWT).
-  - Tester la recherche avec des termes variés pour s’assurer qu’elle est intuitive.
+  - **Tests Backend** :
+    - **[À faire]** Tester les endpoints `/auth` et `/users` (register, login, /me).
+    - **[À faire]** Tester les endpoints `/users/me/addresses` (créer, lister, définir défaut).
+    - **[À faire]** Tester l'endpoint `/products` avec filtres (catégorie, tags, recherche) et pagination.
+    - **[À faire]** Tester les endpoints `/quotes` (créer, lister, get, MAJ statut).
+    - **[À faire]** Tester les endpoints `/orders` (créer, lister, get, MAJ statut) -> **Vérifier impact DB (stock, mouvements)**.
+    - **[À faire]** Tester l'endpoint `/chat` avec des demandes incluant des variations SKU et vérifier les réponses basiques.
+  - **Tests Frontend** :
+    - **[À faire par l'utilisateur/équipe frontend]** Confirmer affichage produits/variations, panier, commande, compte utilisateur.
+  - **Vérification Logs** :
+    - **[À faire]** Surveiller les logs FastAPI et PostgreSQL pendant les tests.
+- **Points d'attention** :
+  - La complexité des tests augmente significativement. Prévoir des scénarios de tests variés.
 
-### 7. Surveillance et maintenance
-- **Objectif** : Assurer la stabilité et la scalabilité de l’application.
+### 6. Fonctionnalités Avancées et Interface d'Administration
+- **Objectif** : Fournir des outils de gestion et améliorer l'expérience utilisateur.
+- **Statut** : **À faire**
 - **Actions à réaliser** :
-  - Configurer des outils de monitoring (ex. : Prometheus, Grafana) pour surveiller les performances du serveur et de la base de données.
-  - Mettre en place des sauvegardes régulières de la base de données (`pg_dump`).
-  - Planifier une migration vers une gestion des images basée sur des URLs si les performances deviennent un problème.
-- **Points d’attention** :
-  - Surveiller la taille de la base de données si tu utilises des BLOB.
-  - Prévoir une montée en charge si le nombre de produits ou d’utilisateurs augmente.
+    - Interface d'Administration
+    - Recherche Avancée (finalisation)
+    - Recommandations
+    - Logique avancée `/chat` (panier, confirmation adresse, etc.)
+
+### 7. Surveillance et Maintenance Continue
+- **Objectif** : Assurer la stabilité, la sécurité et la scalabilité à long terme.
+- **Actions à réaliser** :
+  - Configurer monitoring (Prometheus, Grafana) pour surveiller CPU, RAM, disque, requêtes DB, temps de réponse API.
+  - Mettre en place des sauvegardes régulières et testées de la base de données (`pg_dump`).
+  - Planifier les mises à jour de sécurité (OS, Python, librairies).
+  - Surveiller la taille de la base de données et l'utilisation des index.
+- **Points d'attention** :
+  - Anticiper la montée en charge avec l'augmentation du catalogue et des utilisateurs.
 
 ---
 
 ## Résumé pour un LLM
 
-**Contexte** : Application `livrerjardiner.fr` avec 1000 références de produits de jardimnage. Base de données PostgreSQL, backend FastAPI, frontend React. Tables actuelles : `products`, `stock`, `stock_movements`, `orders`, `pending_orders`. Images stockées sous forme url (colonne `image url` dans `products`).
+**Contexte** : Application `livrerjardiner.fr` visant 1000+ références avec variations (taille, couleur...), gestion utilisateurs, commandes multi-produits. Base de données PostgreSQL, backend FastAPI, frontend React.
 
-**Étapes réalisées** :
-1. Mise à jour de la base de données : Création de `products`, mise à jour de `stock` avec `product_id`, migration des données, ajout de `stock_movements`.
-2. Gestion des images : Stockage en BLOB, import via script Python, affichage en base64 dans le frontend.
-3. Importation des 1000 références via CSV.
+**État Actuel** : Structure DB V2 (products/stock liés) mais limitée (pas de variations, pas d'utilisateurs complets, pas de commandes/devis multi-produits). Backend partiellement adapté à V2.
 
-**Étapes à venir** :
-1. **Optimisation** : Ajouter un cache Redis, optimiser les images (redimensionnement, lazy loading).
-2. **Tests** : Tester les endpoints `/products`, `/chat`, `/order`, et le frontend.
-3. **Fonctionnalités** : Ajouter une interface d’administration, une recherche avancée, des recommandations.
-4. **Maintenance** : Configurer monitoring et sauvegardes, surveiller les performances.
+**Prochaine Étape Majeure (Étape 5 - Tests)** :
+- **[En cours]** Tester tous les endpoints API V3 (auth, users, addresses, products, quotes, orders, chat basique).
+- **[À faire]** Surveiller les logs.
+- **[À faire par User]** Tester le frontend.
 
-**Recommandations** :
-- Sécuriser les endpoints d’administration.
-- Tester rigoureusement avant de déployer en production.
+**Étapes Suivantes (Post-Tests)** :
+- **Étape 4 : Optimisation** (Redis, SQL, Images).
+- **Étape 6 : Fonctionnalités Avancées** (Admin, Recherche, Recommandations, Chat avancé).
+- **Étape 7 : Maintenance**.
+
+**Recommandations** : Prioriser la **Refonte V3 (Étape 3)** car elle est fondamentale. Prévoir une migration de données. Tester rigoureusement.
 
 ---
 
-Cette roadmap est concise et structurée pour qu’un LLM ou une équipe puisse la suivre facilement. Si tu veux approfondir une étape ou ajouter des détails, fais-le-moi savoir ! 🌟
+Cette roadmap mise à jour reflète la complexité accrue mais nécessaire pour atteindre tes objectifs. Dis-moi si cela te semble correct et par où tu souhaites commencer (probablement par la définition SQL détaillée de la nouvelle structure V3).
