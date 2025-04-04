@@ -18,13 +18,26 @@ from reportlab.lib.units import inch
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 import os
-from dotenv import load_dotenv
 from typing import Optional
-from pydantic import BaseModel, EmailStr
 import time
 from fastapi.concurrency import run_in_threadpool
 from datetime import datetime
 import json
+
+# --- Importer le modèle depuis models.py ---
+from models import OrderRequest
+
+# --- Importer les fonctions CRUD ---
+from crud import check_stock, save_quote, save_pending_order, save_order # generate_pdf est maintenant implicite via save_quote
+
+# --- Importer le service d'envoi d'email --- 
+from services import send_quote_email
+
+# --- Importer logique LLM ---
+from llm_logic import get_llm, stock_prompt, general_chat_prompt, parsing_prompt
+
+# --- Importer la configuration --- 
+import config
 
 # Configurer le logging
 logging.basicConfig(level=logging.DEBUG)
@@ -56,113 +69,8 @@ ERROR_MESSAGES = [
     "Notre base de données fait la sieste. On la réveille avec un café !",
 ]
 
-# Charger les variables d'environnement
-load_dotenv()
-sender_email = os.getenv("SENDER_EMAIL", "robotia@livrerjardiner.fr")
-sender_password = os.getenv("SENDER_PASSWORD", "tonmotdepasse")
-smtp_host = os.getenv("SMTP_HOST", "smtp.hostinger.com")
-smtp_port = int(os.getenv("SMTP_PORT", "465"))
-postgres_password = os.getenv("POSTGRES_PASSWORD", "motPAsse")
-
-logger.info(f"SENDER_EMAIL={sender_email}, SMTP_HOST={smtp_host}, SMTP_PORT={smtp_port}")
-
-# Classe SMTPHostinger pour envoyer des emails via Hostinger
-class SMTPHostinger:
-    """
-    SMTP module for Hostinger emails
-    """
-    def __init__(self):
-        self.conn = None
-
-    def auth(self, user: str, password: str, host: str, port: int, debug: bool = False):
-        """
-        Authenticates a session
-        """
-        self.user = user
-        self.password = password
-        self.host = host
-        self.port = port
-
-        context = ssl.create_default_context()
-
-        self.conn = smtplib.SMTP_SSL(host, port, context=context)
-        self.conn.set_debuglevel(debug)
-
-        try:
-            self.conn.login(user, password)
-            logger.debug("Connexion SMTP réussie")
-            return True
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"Erreur d'authentification SMTP : {str(e)}")
-            return False
-        except Exception as e:
-            logger.error(f"Erreur lors de la connexion SMTP : {str(e)}")
-            return False
-
-    def send(self, recipient: str, sender: str, subject: str, message: str):
-        """
-        Sends an email to the specified recipient.
-        Assumes 'message' is a fully formatted email string (e.g., from msg.as_string()).
-        The subject parameter is ignored here as it should be part of the message string.
-        """
-        if self.conn:
-            try:
-                # Envoyer directement la chaîne 'message' formatée
-                # Assurer que le destinataire est une liste
-                self.conn.sendmail(sender, [recipient], message)
-                logger.debug(f"Email envoyé à {recipient}")
-                return True
-            except Exception as e:
-                logger.error(f"Erreur lors de l'envoi de l'email : {str(e)}")
-                return False
-        else:
-            logger.error("Connexion SMTP non établie")
-            return False
-
-    def close(self):
-        """
-        Closes the SMTP connection
-        """
-        if self.conn:
-            try:
-                self.conn.quit()
-                logger.debug("Connexion SMTP fermée proprement via quit()")
-            except smtplib.SMTPServerDisconnected:
-                logger.warning("Tentative de fermeture (quit) sur une connexion SMTP déjà déconnectée.")
-            except Exception as e:
-                logger.error(f"Erreur inattendue lors de la fermeture SMTP (quit) : {str(e)}")
-            finally:
-                self.conn = None # Assurer que self.conn est None après tentative de fermeture
-        else:
-             logger.debug("Aucune connexion SMTP active à fermer.")
-
 DB_CONNECT_ERROR_MSG = "Connexion à la base de données impossible pour le moment. Veuillez réessayer."
 DB_SQL_ERROR_MSG = "Un problème technique est survenu avec la base de données."
-
-def check_stock(item: str) -> int:
-    logger.debug(f"Vérification du stock pour l'article : {item}")
-    conn = None # Initialiser à None
-    try:
-        conn = psycopg2.connect(dbname="livrerjardiner", user="monuser", password="moncode") # Mettre les vrais identifiants ou via env var
-        cur = conn.cursor()
-        cur.execute("SELECT quantity FROM stock WHERE item=%s", (item,))
-        result = cur.fetchone()
-        stock = result[0] if result else 0
-        logger.debug(f"Stock trouvé : {stock}")
-        return stock
-    except OperationalError as e:
-        logger.error(f"Erreur opérationnelle DB dans check_stock : {str(e)}")
-        raise HTTPException(status_code=503, detail=DB_CONNECT_ERROR_MSG)
-    except ProgrammingError as e:
-        logger.error(f"Erreur SQL dans check_stock : {str(e)}")
-        raise HTTPException(status_code=500, detail=DB_SQL_ERROR_MSG)
-    except Exception as e:
-        logger.error(f"Erreur inattendue dans check_stock : {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Erreur interne lors de la vérification du stock.")
-    finally:
-        if conn:
-            conn.close()
-            logger.debug("Connexion DB fermée dans check_stock")
 
 def generate_quote_pdf(item: str, quantity: int, unit_price: float, total_price: float, quote_id: int) -> str:
     logger.debug(f"Génération du PDF pour le devis #{quote_id}")
@@ -283,196 +191,15 @@ def generate_quote_pdf(item: str, quantity: int, unit_price: float, total_price:
         logger.error(f"Erreur lors de la génération du PDF : {str(e)}", exc_info=True)
         raise # Propager l'erreur pour que l'appelant la gère
 
-def save_quote(user_email: str, item: str, quantity: int) -> int:
-    logger.debug(f"Sauvegarde du devis pour {user_email}, item={item}, quantity={quantity}")
-    unit_price = 5.0
-    total_price = unit_price * quantity
-    conn = None
-    try:
-        conn = psycopg2.connect(dbname="livrerjardiner", user="monuser", password="moncode")
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO quotes (user_email, item, quantity, unit_price, total_price) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (user_email, item, quantity, unit_price, total_price)
-        )
-        quote_id = cur.fetchone()[0]
-        # La génération PDF peut aussi lever une erreur, gérée en dehors
-        pdf_path = generate_quote_pdf(item, quantity, unit_price, total_price, quote_id)
-        cur.execute("UPDATE quotes SET pdf_path=%s WHERE id=%s", (pdf_path, quote_id))
-        conn.commit()
-        logger.debug(f"Devis sauvegardé : quote_id={quote_id}")
-        return quote_id
-    except OperationalError as e:
-        logger.error(f"Erreur opérationnelle DB dans save_quote : {str(e)}")
-        raise HTTPException(status_code=503, detail=DB_CONNECT_ERROR_MSG)
-    except ProgrammingError as e:
-        logger.error(f"Erreur SQL dans save_quote : {str(e)}")
-        # Peut-être annuler la transaction si possible ?
-        if conn: conn.rollback()
-        raise HTTPException(status_code=500, detail=DB_SQL_ERROR_MSG)
-    except Exception as e:
-        logger.error(f"Erreur inattendue dans save_quote : {str(e)}", exc_info=True)
-        if conn: conn.rollback()
-        # Propager ou lever une HTTP 500 plus spécifique à l'échec de sauvegarde
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la création du devis: {e}")
-    finally:
-        if conn:
-            conn.close()
-            logger.debug("Connexion DB fermée dans save_quote")
-
-def save_pending_order(user_email: str, item: str, quantity: int):
-    logger.debug(f"Sauvegarde d'une commande en attente pour {user_email}...")
-    conn = None
-    try:
-        conn = psycopg2.connect(dbname="livrerjardiner", user="monuser", password="moncode")
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO pending_orders (user_email, item, quantity) VALUES (%s, %s, %s)",
-            (user_email, item, quantity)
-        )
-        conn.commit()
-        logger.debug("Commande en attente sauvegardée")
-    except OperationalError as e:
-        logger.error(f"Erreur opérationnelle DB dans save_pending_order : {str(e)}")
-        raise HTTPException(status_code=503, detail=DB_CONNECT_ERROR_MSG)
-    except ProgrammingError as e:
-        logger.error(f"Erreur SQL dans save_pending_order : {str(e)}")
-        if conn: conn.rollback()
-        raise HTTPException(status_code=500, detail=DB_SQL_ERROR_MSG)
-    except Exception as e:
-        logger.error(f"Erreur inattendue dans save_pending_order : {str(e)}", exc_info=True)
-        if conn: conn.rollback()
-        raise HTTPException(status_code=500, detail="Erreur lors de la sauvegarde de la commande en attente.")
-    finally:
-        if conn:
-            conn.close()
-            logger.debug("Connexion DB fermée dans save_pending_order")
-
-def save_order(user_email: str, item: str, quantity: int, delivery_method: str):
-    logger.debug(f"Sauvegarde de la commande pour {user_email}...")
-    conn = None
-    try:
-        conn = psycopg2.connect(dbname="livrerjardiner", user="monuser", password="moncode")
-        cur = conn.cursor()
-        # Potentiellement utiliser une transaction ici
-        cur.execute(
-            "INSERT INTO orders (user_email, item, quantity, delivery_method) VALUES (%s, %s, %s, %s)",
-            (user_email, item, quantity, delivery_method)
-        )
-        cur.execute("UPDATE stock SET quantity = quantity - %s WHERE item=%s", (quantity, item))
-        # Vérifier si la mise à jour du stock a réussi (ex: stock non négatif)
-        # ... logique de vérification supplémentaire ici ...
-        conn.commit()
-        logger.debug("Commande sauvegardée et stock mis à jour")
-    except OperationalError as e:
-        logger.error(f"Erreur opérationnelle DB dans save_order : {str(e)}")
-        raise HTTPException(status_code=503, detail=DB_CONNECT_ERROR_MSG)
-    except ProgrammingError as e:
-        logger.error(f"Erreur SQL dans save_order : {str(e)}")
-        if conn: conn.rollback() # Important dans une transaction
-        raise HTTPException(status_code=500, detail=DB_SQL_ERROR_MSG)
-    except Exception as e:
-        logger.error(f"Erreur inattendue dans save_order : {str(e)}", exc_info=True)
-        if conn: conn.rollback()
-        raise HTTPException(status_code=500, detail="Erreur lors de la finalisation de la commande.")
-    finally:
-        if conn:
-            conn.close()
-            logger.debug("Connexion DB fermée dans save_order")
-
-def send_quote_email(user_email: str, quote_id: int, pdf_path: str):
-    logger.debug(f"Préparation de l'email à {user_email} pour le devis #{quote_id}")
-    subject = f"Devis #{quote_id} - LivrerJardiner.fr"
-    body = f"""
-    Bonjour,
-
-    Voici votre devis #{quote_id} pour votre commande. Veuillez le valider pour confirmer.
-
-    Merci de votre confiance,
-    L'équipe LivrerJardiner.fr
-    """
-
-    msg = MIMEMultipart()
-    msg["From"] = sender_email
-    msg["To"] = user_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with open(pdf_path, "rb") as f:
-            attach = MIMEApplication(f.read(), _subtype="pdf")
-            attach.add_header("Content-Disposition", "attachment", filename=f"devis_{quote_id}.pdf")
-            msg.attach(attach)
-    except Exception as e:
-        logger.error(f"Erreur lors de la lecture ou attachement du PDF pour l'email : {str(e)}")
-        return False # Ne pas tenter d'envoyer si le PDF échoue
-
-    # Créer, authentifier, envoyer et fermer la connexion pour cet email spécifique
-    local_smtp_client = SMTPHostinger()
-    email_sent = False
-    try:
-        logger.debug(f"Tentative d'authentification SMTP pour l'envoi à {user_email}")
-        if local_smtp_client.auth(sender_email, sender_password, smtp_host, smtp_port, debug=True):
-            logger.debug(f"Authentification réussie. Tentative d'envoi à {user_email}")
-            email_sent = local_smtp_client.send(
-                recipient=user_email,
-                sender=sender_email,
-                subject=subject, # Ignoré par send mais passé pour cohérence
-                message=msg.as_string()
-            )
-            if not email_sent:
-                logger.error(f"La méthode send a retourné False pour {user_email}")
-        else:
-            logger.error(f"Échec de l'authentification SMTP lors de la tentative d'envoi à {user_email}")
-
-    except Exception as e:
-        logger.error(f"Exception lors de l'envoi de l'email à {user_email}: {str(e)}", exc_info=True)
-        email_sent = False
-    finally:
-        logger.debug(f"Fermeture de la connexion SMTP pour l'envoi à {user_email}")
-        local_smtp_client.close()
-
-    if not email_sent:
-        logger.error(f"Échec final de l'envoi de l'email de devis à {user_email}")
-    return email_sent
-
-try:
-    llm = OllamaLLM(model="mistral", base_url="http://localhost:11434")
-    logger.info("LLM initialisé avec succès")
-except Exception as e:
-    logger.error(f"Erreur lors de l'initialisation du LLM : {str(e)}")
-    llm = None
-
-# Prompt principal pour les requêtes liées au stock
-stock_prompt = PromptTemplate(
-    input_variables=["input", "stock", "quantity", "item", "is_enough"],
-    template="L'utilisateur demande : {input}. Le stock actuel est de {stock} {item} pour une demande de {quantity}. Le stock est-il suffisant ? {is_enough}. Réponds de manière utile et conviviale, en français uniquement."
-)
-
-# Prompt simple pour la conversation générale
-general_chat_prompt = PromptTemplate(
-    input_variables=["input"],
-    template="L'utilisateur demande : {input}. Réponds de manière utile, conviviale et pertinente, en français uniquement."
-)
-
-# NOUVEAU: Prompt pour le parsing initial (Intent + Entities)
-parsing_prompt_template = """Analyse la demande de l'utilisateur suivante et retourne un objet JSON valide avec les clés "intent" et "entities".
-Les intents possibles sont: "verifier_stock", "demande_quantite", "info_generale".
-Les entités possibles dans l'objet "entities" sont: "item" (le nom normalisé de l'article, en minuscule et singulier si possible) et "quantity" (le nombre entier demandé).
-Si une entité n'est pas trouvée ou non applicable, retourne null pour sa valeur ou omet la clé. Ne retourne que le JSON, sans texte explicatif avant ou après.
-
-Demande Utilisateur: "{input}"
-
-JSON:
-"""
-parsing_prompt = PromptTemplate(input_variables=["input"], template=parsing_prompt_template)
-
 @app.get("/chat")
-async def chat(input: str, delivery_method: str = "livraison", user_email: Optional[str] = None):
-    logger.info(f"Requête chat reçue : input={input}, user_email={user_email}, delivery_method={delivery_method}")
-    if not llm:
-        logger.error("LLM non disponible")
-        return {"message": "Désolé, notre assistant IA est en grève pour plus de soleil ! Réessaie plus tard.", "can_order": False, "item": None, "quantity": None} # Retourner None pour item/qty
+async def chat(input: str, delivery_method: str = "livraison", user_email: Optional[str] = None, selected_model: str = "mistral"):
+    logger.info(f"Requête chat reçue : input={input}, model={selected_model}, user_email={user_email}, delivery_method={delivery_method}")
+    
+    # Obtenir l'instance LLM demandée (ou fallback)
+    current_llm = get_llm(selected_model)
+    if not current_llm:
+        logger.error(f"LLM demandé ({selected_model}) ou fallback non disponible")
+        return {"message": "Désolé, notre assistant IA est indisponible pour le moment.", "can_order": False, "item": None, "quantity": None}
 
     # --- Étape 1 : Parsing de l'intention et des entités via LLM ---
     parsed_intent = "info_generale" # Défaut
@@ -483,8 +210,7 @@ async def chat(input: str, delivery_method: str = "livraison", user_email: Optio
     try:
         logger.debug("Appel LLM pour parsing intent/entities...")
         parsing_formatted_prompt = parsing_prompt.format(input=input)
-        # Utiliser run_in_threadpool pour l'appel LLM
-        parsing_response_raw = await run_in_threadpool(llm.invoke, parsing_formatted_prompt)
+        parsing_response_raw = await run_in_threadpool(current_llm.invoke, parsing_formatted_prompt)
         logger.debug(f"Réponse brute du parsing LLM: {parsing_response_raw}")
 
         # Nettoyer et parser la réponse JSON
@@ -581,9 +307,8 @@ async def chat(input: str, delivery_method: str = "livraison", user_email: Optio
 
         # --- Étape 3 : Générer la Réponse Finale via LLM ---
         logger.debug(f"Appel LLM pour réponse finale avec prompt: {final_prompt_to_use.template}")
-        # Utiliser run_in_threadpool pour le second appel LLM aussi
         final_formatted_prompt = final_prompt_to_use.format(**final_invoke_params)
-        final_response = await run_in_threadpool(llm.invoke, final_formatted_prompt)
+        final_response = await run_in_threadpool(current_llm.invoke, final_formatted_prompt)
         logger.info(f"Réponse finale LLM : {final_response}")
 
         return_data["message"] = final_response
@@ -603,13 +328,6 @@ async def chat(input: str, delivery_method: str = "livraison", user_email: Optio
         error_msg = random.choice(ERROR_MESSAGES)
         return_data["message"] = f"Oups, un problème technique : {error_msg}"
         return return_data
-
-# Modèle Pydantic pour les données de la requête /order
-class OrderRequest(BaseModel):
-    user_email: EmailStr # Utilise EmailStr pour validation automatique
-    item: str
-    quantity: int
-    delivery_method: str
 
 @app.post("/order")
 async def create_order(order_data: OrderRequest):
@@ -649,11 +367,22 @@ async def create_order(order_data: OrderRequest):
             response_message = f"Devis #{quote_id} créé. Votre commande est prête pour {delivery_method}. Vous recevrez le devis par email pour validation."
             logger.info(f"Commande confirmée pour /order : delivery_method={delivery_method}")
 
-        # Étape 4 : Envoyer le devis par email
-        email_sent = await run_in_threadpool(send_quote_email, user_email, quote_id, pdf_path)
+        # Étape 4 : Envoyer le devis par email via le service
+        # Passer la configuration SMTP chargée depuis les variables d'env
+        email_sent = await run_in_threadpool(
+            send_quote_email,
+            user_email,
+            quote_id,
+            pdf_path,
+            config.SENDER_EMAIL,     # <- Utilise config.
+            config.SENDER_PASSWORD,  # <- Utilise config.
+            config.SMTP_HOST,        # <- Utilise config.
+            config.SMTP_PORT         # <- Utilise config.
+        )
         if not email_sent:
             response_message += " (Note : l'envoi de l'email de devis a échoué.)"
-        logger.info(f"Email de devis envoyé à {user_email} pour /order: {email_sent}")
+        # Le log INFO est maintenant dans le service
+        # logger.info(f"Email de devis envoyé à {user_email} pour /order: {email_sent}")
 
         return {"message": response_message, "success": True, "quote_id": quote_id}
 
