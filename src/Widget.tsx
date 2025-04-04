@@ -283,7 +283,7 @@ const Widget: React.FC = () => {
     zIndex: 9999,
     borderRadius: isExpanded ? '8px' : '50%', // Rond si plié
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)', // Ombre portée
-    transition: 'width 0.3s ease, height 0.3s ease, border-radius 0.3s ease, top 0.2s ease, left 0.2s ease', // Animation douce (ajout top/left)
+    transition: 'width 0.3s ease, height 0.3s ease, border-radius 0.3s ease', 
     backgroundColor: 'white', // Fond blanc par défaut
     display: 'flex', // Utiliser flex pour la structure interne
     flexDirection: 'column', // Empiler header et content
