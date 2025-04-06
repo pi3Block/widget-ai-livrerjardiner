@@ -75,17 +75,21 @@ async def create_user(db: AsyncSession, user_in: models.UserCreate) -> models.Us
     """Crée un nouvel utilisateur en utilisant SQLAlchemy et FastCRUD."""
     logger.debug(f"[CRUD_V2] Création utilisateur: {user_in.email}")
 
-    # 1. Vérifier si l'email existe déjà en utilisant FastCRUD (get_multi avec filtre par argument nommé)
-    existing_user_result = await crud_user.get_multi(db=db, email=user_in.email, limit=1)
-    existing_user = existing_user_result.data[0] if existing_user_result.data else None
+    # 1. Vérifier si l'email existe déjà en utilisant FastCRUD (get), retournant un dict ou None
+    existing_user = await crud_user.get(db=db, email=user_in.email)
     if existing_user:
         logger.warning(f"[CRUD_V2] Tentative de création d'un utilisateur avec email existant: {user_in.email}")
         raise HTTPException(status_code=409, detail="Un compte avec cet email existe déjà.")
 
-    # 2. Hacher le mot de passe (la fonction get_password_hash reste inchangée pour l'instant)
+    # 2. Hacher le mot de passe avec bcrypt
     try:
-        hashed_password = get_password_hash(user_in.password)
-    except ValueError as e:
+        # Encoder le mot de passe en bytes avant de le hacher
+        password_bytes = user_in.password.encode('utf-8')
+        # Générer le hash avec bcrypt
+        hashed_password_bytes = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+        # Décoder le hash en string UTF-8 pour le stockage en DB
+        hashed_password = hashed_password_bytes.decode('utf-8')
+    except Exception as e: # Exception plus générale au cas où
         logger.error(f"[CRUD_V2] Erreur lors du hachage du mot de passe pour {user_in.email}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur interne lors de la sécurisation du mot de passe.")
 
@@ -111,10 +115,9 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
     """Authentifie un utilisateur par email et mot de passe en utilisant SQLAlchemy/FastCRUD."""
     logger.debug(f"[CRUD_V2] Tentative d'authentification pour: {email}")
 
-    # 1. Récupérer l'utilisateur par email via FastCRUD (get_multi avec filtre par argument nommé)
+    # 1. Récupérer l'utilisateur par email via FastCRUD (get), retournant un dict ou None
     try:
-        user_db_result = await crud_user.get_multi(db=db, email=email, limit=1)
-        user_db = user_db_result.data[0] if user_db_result.data else None
+        user_db = await crud_user.get(db=db, email=email)
     except Exception as e:
         # Gérer les erreurs potentielles lors de la récupération
         logger.error(f"[CRUD_V2] Erreur DB lors de la recherche de l'utilisateur {email}: {e}", exc_info=True)
@@ -125,15 +128,22 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
         logger.warning(f"[AUTH_V2] Utilisateur non trouvé: {email}")
         return None # Utilisateur non trouvé
 
-    # 2. Vérifier le mot de passe (utiliser la fonction verify_password existante)
-    logger.debug(f"[AUTH_V2_VERIF] Hash lu depuis DB: {user_db.password_hash}")
+    # 2. Vérifier le mot de passe avec bcrypt.checkpw
+    logger.debug(f"[AUTH_V2_VERIF] Hash lu depuis DB: {user_db['password_hash']}")
     logger.debug(f"[AUTH_V2_VERIF] Mot de passe reçu: '{password}'")
-    if not verify_password(password, user_db.password_hash):
+    
+    # Encoder le mot de passe en clair et le hash récupéré en bytes
+    password_bytes = password.encode('utf-8')
+    hashed_password_bytes = user_db['password_hash'].encode('utf-8')
+    
+    if not bcrypt.checkpw(password_bytes, hashed_password_bytes):
         logger.warning(f"[AUTH_V2] Mot de passe incorrect pour: {email}")
         return None # Mot de passe incorrect
 
-    logger.info(f"[AUTH_V2] Authentification réussie pour: {email} (ID: {user_db.id})")
-    # 3. Retourner l'objet UserDB complet (le hash sera filtré au niveau de l'API si besoin)
+    logger.info(f"[AUTH_V2] Authentification réussie pour: {email} (ID: {user_db['id']})")
+    # 3. Retourner le dictionnaire UserDB complet (sera filtré par le schéma Pydantic dans l'API si besoin)
+    #   Ou convertir manuellement en UserDB si nécessaire plus loin.
+    #   Pour le token, seul l'ID est généralement nécessaire.
     return user_db
 
 async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[models.UserDB]:
@@ -143,7 +153,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[models.User
         # Utiliser eager loading pour charger les adresses en même temps si nécessaire
         # options = [selectinload(models.UserDB.addresses)]
         # user_db = await crud_user.get(db=db, id=user_id, options=options)
-        user_db = await crud_user.get(db=db, id=user_id)
+        user_db = await crud_user.get(db=db, id=user_id, schema_to_select=models.User, return_as_model=True)
         if not user_db:
             logger.warning(f"[CRUD_V2] User ID {user_id} non trouvé.")
             return None # Correction de l'indentation
@@ -344,7 +354,7 @@ async def get_category(db: AsyncSession, category_id: int) -> Optional[models.Ca
     """Récupère une catégorie par son ID en utilisant FastCRUD."""
     logger.debug(f"[CRUD_V3] Récupération catégorie ID: {category_id} via FastCRUD")
     try:
-        category_db = await crud_category.get(db=db, id=category_id)
+        category_db = await crud_category.get(db=db, id=category_id, schema_to_select=models.Category, return_as_model=True)
         if not category_db:
             logger.warning(f"[CRUD_V3] Catégorie ID {category_id} non trouvée.")
             return None
@@ -423,7 +433,7 @@ async def get_product_variant_by_id(db: AsyncSession, variant_id: int) -> Option
     try:
         # Charger la relation 'tags' en même temps
         options = [selectinload(models.ProductVariantDB.tags)]
-        variant_db = await crud_product_variant.get(db=db, id=variant_id, options=options)
+        variant_db = await crud_product_variant.get(db=db, id=variant_id, schema_to_select=models.ProductVariant, return_as_model=True, options=options)
         if not variant_db:
             logger.warning(f"[CRUD_V3] Variation ID {variant_id} non trouvée.")
             return None
@@ -461,7 +471,7 @@ async def get_stock_for_variant(db: AsyncSession, variant_id: int) -> Optional[m
     logger.debug(f"[CRUD_V3] Vérification stock pour variant_id: {variant_id} via FastCRUD")
     try:
         # La PK de StockDB est product_variant_id
-        stock_db = await crud_stock.get(db=db, id=variant_id)
+        stock_db = await crud_stock.get(db=db, id=variant_id, schema_to_select=models.Stock, return_as_model=True)
         if not stock_db:
             logger.warning(f"[CRUD_V3] Enregistrement stock non trouvé pour variant_id {variant_id}")
             return None
@@ -615,7 +625,7 @@ async def get_quote_by_id(db: AsyncSession, quote_id: int) -> Optional[models.Qu
             selectinload(models.QuoteDB.items).selectinload(models.QuoteItemDB.variant).selectinload(models.ProductVariantDB.tags) # Charger items -> variant -> tags
         ]
         # Utiliser crud_quote.get avec les options de chargement
-        quote_db = await crud_quote.get(db=db, id=quote_id, options=options)
+        quote_db = await crud_quote.get(db=db, id=quote_id, schema_to_select=models.Quote, return_as_model=True, options=options)
 
         if not quote_db:
             logger.warning(f"[CRUD_V2] Devis ID {quote_id} non trouvé.")
@@ -834,7 +844,7 @@ async def get_order_by_id(db: AsyncSession, order_id: int) -> Optional[models.Or
             selectinload(models.OrderDB.billing_address),
             selectinload(models.OrderDB.items).selectinload(models.OrderItemDB.variant).selectinload(models.ProductVariantDB.tags)
         ]
-        order_db = await crud_order.get(db=db, id=order_id, options=options)
+        order_db = await crud_order.get(db=db, id=order_id, schema_to_select=models.Order, return_as_model=True, options=options)
 
         if not order_db:
             logger.warning(f"[CRUD_V2] Commande ID {order_id} non trouvée.")
