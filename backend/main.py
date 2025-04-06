@@ -260,6 +260,40 @@ async def read_product(
         error_message = random.choice(config.FUNNY_ERROR_MESSAGES)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
+@app.put("/products/{product_id}", response_model=schemas.Product)
+async def update_existing_product(
+    product_id: int,
+    product_in: schemas.ProductUpdate,
+    current_admin_user: Annotated[models.UserDB, Depends(auth.get_current_admin_user)],
+    db: AsyncSession = Depends(get_db_session)
+):
+    logger.info(f"Tentative MAJ produit ID: {product_id} par admin {current_admin_user.id}")
+    try:
+        updated_product_db = await crud.update_product(db=db, product_id=product_id, product_in=product_in)
+        if updated_product_db is None:
+            # Cela peut arriver si update_product retourne None (cas où produit non trouvé OU aucune donnée à MAJ selon l'implémentation)
+            # FastCRUD update devrait lever 404 si non trouvé. Si aucune donnée, update_product retourne le produit existant.
+            # On se fie à l'implémentation de crud.update_product. Si elle retourne None explicitement -> 404.
+            logger.warning(f"Produit ID {product_id} non trouvé pour MAJ ou aucune donnée fournie.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produit non trouvé ou aucune donnée à mettre à jour.")
+        
+        # Valider le modèle DB retourné vers le schéma Pydantic pour la réponse
+        # Attention: get_product_by_id est nécessaire si update_product ne retourne pas l'objet chargé avec relations
+        # Mais ici, crud_product.update devrait retourner l'objet mis à jour.
+        # Pour être sûr d'avoir les relations à jour pour la réponse, on recharge l'objet complet.
+        refreshed_product = await crud.get_product_by_id(db, product_id)
+        if refreshed_product is None:
+             logger.error(f"Impossible de recharger le produit ID {product_id} après mise à jour!")
+             raise HTTPException(status_code=500, detail="Erreur interne après mise à jour du produit.")
+
+        return schemas.Product.model_validate(refreshed_product)
+        
+    except HTTPException as e:
+        raise e # Re-lever les exceptions HTTP (404, etc.) levées par CRUD
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la MAJ du produit ID {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la mise à jour du produit.")
+
 # Helper pour parser les paramètres React-Admin
 def parse_react_admin_params(
     request: Request,
@@ -358,6 +392,33 @@ async def read_category(
         logger.error(f"Erreur lors de la récupération de la catégorie ID {category_id}: {e}", exc_info=True)
         error_message = random.choice(config.FUNNY_ERROR_MESSAGES)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+
+@app.put("/categories/{category_id}", response_model=schemas.Category)
+async def update_existing_category(
+    category_id: int,
+    category_in: schemas.CategoryUpdate,
+    current_admin_user: Annotated[models.UserDB, Depends(auth.get_current_admin_user)],
+    db: AsyncSession = Depends(get_db_session)
+):
+    logger.info(f"Tentative MAJ catégorie ID: {category_id} par admin {current_admin_user.id}")
+    try:
+        updated_category_db = await crud.update_category(
+            db=db, 
+            category_id=category_id, 
+            category_in=category_in
+        )
+        if updated_category_db is None:
+             logger.warning(f"Catégorie ID {category_id} non trouvée pour MAJ ou aucune donnée fournie.")
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie non trouvée ou aucune donnée à mettre à jour.")
+        
+        # Valider et retourner
+        return schemas.Category.model_validate(updated_category_db)
+        
+    except HTTPException as e:
+        raise e # Re-lever les exceptions HTTP (404, 409) levées par CRUD
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de la MAJ de la catégorie ID {category_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne lors de la mise à jour de la catégorie.")
 
 @app.post("/products", response_model=schemas.Product, status_code=status.HTTP_201_CREATED)
 async def create_new_product(

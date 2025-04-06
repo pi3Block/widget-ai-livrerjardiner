@@ -41,8 +41,15 @@ logger = logging.getLogger(__name__)
 
 crud_user = FastCRUD(models.UserDB, schemas.UserCreate, schemas.UserUpdate, schemas.User)
 crud_address = FastCRUD(models.AddressDB, schemas.AddressCreate, schemas.AddressUpdate, schemas.Address)
-crud_category = FastCRUD(models.CategoryDB, schemas.CategoryCreate, schemas.CategoryUpdate, schemas.Category)
-crud_tag = FastCRUD(models.TagDB, schemas.TagCreate, schemas.TagCreate, schemas.Tag) # Utilise TagCreate pour Update aussi, à vérifier
+crud_category = FastCRUD(
+    model=models.CategoryDB,
+    create_schema=schemas.CategoryCreate,
+    update_schema=schemas.CategoryUpdate,
+    read_schema=schemas.Category,
+    created_at_column='created_at',
+    updated_at_column='updated_at'
+)
+crud_tag = FastCRUD(models.TagDB, schemas.TagCreate, schemas.TagCreate, schemas.Tag)
 crud_product = FastCRUD(models.ProductDB, schemas.ProductCreate, schemas.ProductUpdate, schemas.Product)
 crud_product_variant = FastCRUD(models.ProductVariantDB, schemas.ProductVariantCreate, schemas.ProductVariantUpdate, schemas.ProductVariant)
 crud_stock = FastCRUD(models.StockDB, schemas.StockBase, schemas.StockUpdate, schemas.Stock) # Utilise StockBase/Update pour Create/Update
@@ -341,46 +348,52 @@ async def list_categories(
     """Liste les catégories avec filtres, tri et pagination, retourne les modèles DB et le compte total."""
     logger.debug(f"[CRUD_V3] Listage catégories: limit={limit}, offset={offset}, sort={sort_by}, desc={sort_desc}, filters={filters}")
     try:
-        # Log avant unpacking pour voir ce que get_multi retourne exactement
-        raw_result = await crud_category.get_multi(
-            db=db,
-            offset=offset,
-            limit=limit,
-            sort_by=sort_by,
-            sort_desc=sort_desc,
-            filter=filters # Passer les filtres directement à FastCRUD
-        )
-        logger.debug(f"[CRUD_V3] Raw result from get_multi: Type={type(raw_result)}, Value={raw_result}")
+        # Construire la requête de base
+        base_query = select(models.CategoryDB)
+        count_query = select(sql_func.count()).select_from(models.CategoryDB)
 
-        # Tentative d'unpacking basé sur l'hypothèse (List[Model], count)
-        # À AJUSTER EN FONCTION DU LOG CI-DESSUS
-        if isinstance(raw_result, tuple) and len(raw_result) == 2 and isinstance(raw_result[0], list) and isinstance(raw_result[1], int):
-            categories_db, total_count = raw_result
-            logger.debug(f"[CRUD_V3] Unpacking réussi (Tuple): {len(categories_db)} items, Count={total_count}")
-        elif isinstance(raw_result, dict) and 'data' in raw_result and 'total_count' in raw_result:
-             # Fallback si get_multi retourne un dict même sans return_as_model=True
-             categories_db = raw_result['data']
-             total_count = raw_result['total_count']
-             logger.debug(f"[CRUD_V3] Unpacking réussi (Dict): {len(categories_db)} items, Count={total_count}")
-             if not isinstance(total_count, int):
-                 logger.error(f"[CRUD_V3] Le 'total_count' du dict n'est pas un entier: {total_count}")
-                 # Essayer de recalculer le count si possible
-                 count_query = select(sql_func.count()).select_from(models.CategoryDB).filter_by(**filters if filters else {})
-                 count_res = await db.execute(count_query)
-                 total_count = count_res.scalar_one_or_none() or 0
-                 logger.warning(f"[CRUD_V3] Recalculated total_count: {total_count}")
+        # Appliquer les filtres manuellement
+        if filters:
+            filter_clauses = []
+            for field, value in filters.items():
+                if hasattr(models.CategoryDB, field):
+                    column = getattr(models.CategoryDB, field)
+                    if isinstance(value, list):
+                        filter_clauses.append(column.in_(value))
+                    else:
+                        filter_clauses.append(column == value)
+                else:
+                     logger.warning(f"[CRUD_V3] Champ de filtre inconnu ignoré: {field}")
+            if filter_clauses:
+                base_query = base_query.where(and_(*filter_clauses))
+                count_query = count_query.where(and_(*filter_clauses))
+
+        # Exécuter la requête de comptage
+        total_count_result = await db.execute(count_query)
+        total_count = total_count_result.scalar_one_or_none() or 0
+        logger.debug(f"[CRUD_V3] Manual count query executed. Total count: {total_count}")
+
+        # Appliquer le tri manuellement
+        if sort_by and hasattr(models.CategoryDB, sort_by):
+            sort_column = getattr(models.CategoryDB, sort_by)
+            if sort_desc:
+                base_query = base_query.order_by(sort_column.desc())
+            else:
+                base_query = base_query.order_by(sort_column.asc())
         else:
-            logger.error(f"[CRUD_V3] Résultat inattendu de get_multi. Impossible d'unpacker. Type: {type(raw_result)}")
-            # Retourner une liste vide et 0 pour éviter crash, mais indique un problème
-            categories_db = []
-            total_count = 0 
+            base_query = base_query.order_by(models.CategoryDB.id) # Tri par défaut
+        
+        # Appliquer la pagination
+        paginated_query = base_query.limit(limit).offset(offset)
 
-        # S'assurer que total_count est un entier
-        if not isinstance(total_count, int):
-             logger.warning(f"[CRUD_V3] total_count n'est pas un entier après unpacking/fallback: {total_count}. Utilisation de 0.")
-             total_count = 0
+        # Exécuter la requête pour obtenir les données
+        data_result = await db.execute(paginated_query)
+        categories_db = list(data_result.scalars().all())
 
-        logger.debug(f"[CRUD_V3] Final values: {len(categories_db)} catégories (modèles DB) récupérées. Total count: {total_count}")
+        # Supprimé: l'appel à get_multi et l'unpacking complexe
+        # raw_result = await crud_category.get_multi(...)
+
+        logger.debug(f"[CRUD_V3] Final values (manual query): {len(categories_db)} catégories (modèles DB) récupérées. Total count: {total_count}")
         return categories_db, total_count
     except Exception as e:
         logger.error(f"[CRUD_V3] Erreur lors du listage des catégories (DB): {e}", exc_info=True)
@@ -419,6 +432,38 @@ async def create_tag(db: AsyncSession, tag_in: schemas.TagCreate) -> models.TagD
         else:
             logger.error(f"[CRUD_V3] Erreur inattendue lors de la création du tag '{tag_in.name}': {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Erreur interne lors de la création du tag.")
+
+async def update_category(
+    db: AsyncSession,
+    category_id: int,
+    category_in: schemas.CategoryUpdate
+) -> Optional[models.CategoryDB]:
+    """Met à jour une catégorie existante en utilisant FastCRUD."""
+    logger.debug(f"[CRUD_V3] Tentative de mise à jour catégorie ID: {category_id}")
+    update_data = category_in.model_dump(exclude_unset=True)
+    if not update_data:
+        logger.warning(f"[CRUD_V3] Aucune donnée fournie pour MAJ catégorie ID {category_id}")
+        # Retourner la catégorie existante si aucune donnée à MAJ
+        existing_category = await get_category(db, category_id) # Utilise la fonction get existante
+        return existing_category
+
+    try:
+        # Utiliser FastCRUD pour la mise à jour
+        updated_category = await crud_category.update(db=db, object=update_data, id=category_id)
+        if not updated_category:
+             logger.warning(f"[CRUD_V3] Catégorie ID {category_id} non trouvée lors de la MAJ.")
+             return None
+        
+        logger.info(f"[CRUD_V3] Catégorie ID {category_id} mise à jour avec succès.")
+        return updated_category
+    except Exception as e:
+        # Gérer les erreurs potentielles (ex: violation d'unicité si on modifie le nom)
+        if "UniqueViolationError" in str(e) or "duplicate key value violates unique constraint" in str(e):
+            logger.warning(f"[CRUD_V3] Conflit lors de la MAJ de la catégorie {category_id} (nom déjà existant?).")
+            raise HTTPException(status_code=409, detail="Une catégorie avec ce nom existe déjà.")
+        else:
+            logger.error(f"[CRUD_V3] Erreur lors de la MAJ catégorie ID {category_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour de la catégorie.")
 
 # --- CRUD: Products & Variants (Refactorisé - Part 1) ---
 
@@ -710,21 +755,27 @@ async def create_order(db: AsyncSession, user_id: int, order_in: schemas.OrderCr
 # --- CRUD: Products (Suite - Get/List/Update/Delete) ---
 
 async def get_product_by_id(db: AsyncSession, product_id: int) -> Optional[models.ProductDB]:
-    """Récupère un produit par son ID, chargeant ses variations et leur stock."""
-    logger.debug(f"[CRUD_V3] Récupération produit ID: {product_id} avec variations et stock")
+    """Récupère un produit par son ID, chargeant ses relations nécessaires (variants, stock, tags, category)."""
+    logger.debug(f"[CRUD_V3] Récupération produit ID: {product_id} via SQLAlchemy direct avec eager loading")
     try:
-        options = [
-            selectinload(models.ProductDB.variants).selectinload(models.ProductVariantDB.stock),
-            selectinload(models.ProductDB.variants).selectinload(models.ProductVariantDB.tags),
-            selectinload(models.ProductDB.category)
-        ]
-        product_db = await crud_product.get(
-            db=db,
-            id=product_id,
-            options=options,
-            return_as_model=True,
-            schema_to_select=schemas.Product # Utiliser le schéma Pydantic complet
+        stmt = (
+            select(models.ProductDB)
+            .options(
+                selectinload(models.ProductDB.variants)
+                    .selectinload(models.ProductVariantDB.stock),
+                selectinload(models.ProductDB.variants)
+                    .selectinload(models.ProductVariantDB.tags),
+                selectinload(models.ProductDB.category)
+            )
+            .where(models.ProductDB.id == product_id)
         )
+        result = await db.execute(stmt)
+        product_db = result.scalar_one_or_none()
+        
+        if not product_db:
+             logger.warning(f"[CRUD_V3] Produit ID {product_id} non trouvé.")
+             return None
+             
         return product_db
     except Exception as e:
         logger.error(f"[CRUD_V3] Erreur lors de la récupération du produit ID {product_id}: {e}", exc_info=True)
@@ -867,4 +918,35 @@ async def create_product_variant(
 
     return created_variant_db
 
-# TODO: Implémenter update_product, delete_product, update_variant, delete_variant etc.
+async def update_product(
+    db: AsyncSession, 
+    product_id: int, 
+    product_in: schemas.ProductUpdate
+) -> Optional[models.ProductDB]:
+    """Met à jour un produit existant en utilisant FastCRUD."""
+    logger.debug(f"[CRUD_V3] Tentative de mise à jour du produit ID: {product_id}")
+    update_data = product_in.model_dump(exclude_unset=True)
+    if not update_data:
+        logger.warning(f"[CRUD_V3] Aucune donnée fournie pour la mise à jour du produit ID {product_id}")
+        # Retourner le produit actuel sans le modifier si aucune donnée n'est fournie
+        # Ou lever une exception, selon la logique souhaitée
+        # Ici on choisit de ne rien faire et de le signaler
+        existing_product = await get_product_by_id(db, product_id) # Utilise la fonction optimisée
+        return existing_product
+
+    try:
+        # Utiliser FastCRUD pour la mise à jour
+        updated_product = await crud_product.update(db=db, object=update_data, id=product_id)
+        if not updated_product:
+             logger.warning(f"[CRUD_V3] Produit ID {product_id} non trouvé lors de la tentative de mise à jour.")
+             return None # Ou lever 404 ? FastCRUD devrait le faire implicitement.
+        
+        logger.info(f"[CRUD_V3] Produit ID {product_id} mis à jour avec succès.")
+        # Retourner l'objet mis à jour (peut nécessiter un refresh si des relations ont changé implicitement)
+        # await db.refresh(updated_product) # Optionnel, dépend si la réponse doit être 100% à jour
+        return updated_product
+    except Exception as e:
+        logger.error(f"[CRUD_V3] Erreur lors de la mise à jour du produit ID {product_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur interne lors de la mise à jour du produit.")
+
+# TODO: Implémenter delete_product, update_variant, delete_variant etc.
