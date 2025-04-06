@@ -1,27 +1,60 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# production
-/build
-/dist
-
-# misc
+# Fichiers généraux et spécifiques à l'OS/éditeur
 .DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-/backend/.env
-
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*/*.old
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
 
-*.old
+# Frontend (Node/React/Vite etc.)
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/coverage/
+frontend/build/
+frontend/dist/
+# Ignorer tous les fichiers .env dans frontend, sauf .env.example
+frontend/.env*
+!frontend/.env.example
+
+# Backend (Python/Flask/FastAPI etc.)
+backend/venv/
+backend/.venv/
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+# Ignorer tous les fichiers .env dans backend, sauf .env.example
+backend/.env*
+!backend/.env.example
+backend/instance/
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/pip-wheel-metadata/
+backend/share/python-wheels/
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
+MANIFEST
+
+# Bases de données locales (si applicable, ex: SQLite)
+*.sqlite3
+*.sqlite3-journal 

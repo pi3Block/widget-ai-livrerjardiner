@@ -1,0 +1,61 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+Absolument ! Voici quelques règles simples et bonnes pratiques spécifiques à FastAPI pour éviter les erreurs de dépendances que nous avons rencontrées :
+
+**Règles d'Or pour l'Injection de Dépendances FastAPI :**
+
+1.  **Choisir UNE Méthode par Paramètre :**
+    *   **Soit** utiliser `Annotated` pour le type *et* la dépendance :
+        ```python
+        from typing import Annotated
+        from fastapi import Depends
+
+        MyDep = Annotated[SomeType, Depends(get_dependency)]
+
+        async def my_endpoint(injected_dep: MyDep): # PAS de = Depends() ici !
+            # ... utiliser injected_dep ...
+        ```
+    *   **Soit** utiliser `= Depends()` comme valeur par défaut :
+        ```python
+        async def my_endpoint(injected_dep: SomeType = Depends(get_dependency)):
+            # ... utiliser injected_dep ...
+        ```
+    *   **NE JAMAIS FAIRE LES DEUX** pour le même paramètre. `Annotated` inclut déjà le `Depends`.
+
+2.  **Ordre des Paramètres : TOUJOURS les non-défauts en PREMIER.**
+    *   Les paramètres qui *n'ont pas* de valeur par défaut (y compris ceux injectés via `Annotated`) doivent **toujours** apparaître *avant* les paramètres qui *ont* une valeur par défaut (comme ceux venant de `Path(...)`, `Query(...)`, `Body(...)` ou ceux avec ` = Depends(...)`).
+    *   **Bon :**
+        ```python
+        async def endpoint(
+            # Paramètres sans défaut (Annotated inclus)
+            dep1: Annotated[Type1, Depends(get_dep1)],
+            dep2: Type2, # Autre paramètre requis
+
+            # Paramètres avec défauts (Path, Query, Body, =Depends)
+            item_id: int = Path(...),
+            limit: int = Query(10),
+            payload: Item = Body(...)
+        ):
+            # ...
+        ```
+    *   **Mauvais (génère "Non-default argument follows default argument") :**
+        ```python
+        async def endpoint(
+            # Paramètres avec défauts
+            item_id: int = Path(...),
+            limit: int = Query(10),
+
+            # Paramètres sans défaut
+            dep1: Annotated[Type1, Depends(get_dep1)] # ERREUR ici
+        ):
+            # ...
+        ```
+
+3.  **Utiliser les Aides de l'IDE et les Linters :**
+    *   Votre IDE (Cursor) et des outils comme Pylint/Flake8 peuvent souvent détecter ces erreurs de signature *avant* l'exécution. Activez-les et soyez attentif aux soulignements et avertissements.
+
+En suivant ces règles simples, vous réduirez considérablement les `TypeError` et `AssertionError` liés à l'injection de dépendances dans FastAPI.

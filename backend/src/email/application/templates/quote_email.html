@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Votre Devis LivrerJardiner.fr</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .header { background-color: #f2f2f2; padding: 10px; text-align: center; }
+        .content { margin-top: 20px; }
+        .footer { margin-top: 30px; font-size: 0.8em; color: #555; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #e8f5e9; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>LivrerJardiner.fr</h1>
+    </div>
+
+    <div class="content">
+        <p>Bonjour {{ user_name | default('Client') }},</p>
+
+        <p>Voici votre devis <strong>#{{ quote.id }}</strong> demandé sur notre site.</p>
+        
+        <p>Vous trouverez le détail complet en pièce jointe.</p>
+        
+        {% if quote.items %}
+        <p>Récapitulatif rapide :</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Article (SKU)</th>
+                    <th>Quantité</th>
+                    <th>Prix Unitaire</th>
+                    <th>Total Ligne</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in quote.items %}
+                <tr>
+                    <td>{{ item.variant_details.get('name', '') }} ({{ item.variant_sku }})</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ "%.2f"|format(item.price_at_quote|float) }} €</td>
+                    <td>{{ "%.2f"|format(item.quantity * item.price_at_quote|float) }} €</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p style="text-align: right; font-weight: bold; margin-top: 10px;">
+            Montant Total : {{ "%.2f"|format(quote.total_amount|float) }} €
+        </p>
+        {% endif %}
+        
+        <p>Pour valider ce devis et passer commande, veuillez cliquer sur le lien dans votre espace client ou nous contacter.</p>
+        
+        <p>Si vous avez des questions, n'hésitez pas à nous répondre.</p>
+    </div>
+
+    <div class="footer">
+        <p>Merci de votre confiance,</p>
+        <p>L'équipe LivrerJardiner.fr</p>
+        <p><a href="https://livrerjardiner.fr">livrerjardiner.fr</a></p>
+    </div>
+</body>
+</html> 

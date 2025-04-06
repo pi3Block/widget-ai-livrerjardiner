@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Confirmation Commande LivrerJardiner.fr</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .header { background-color: #f2f2f2; padding: 10px; text-align: center; }
+        .content { margin-top: 20px; }
+        .footer { margin-top: 30px; font-size: 0.8em; color: #555; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #e8f5e9; }
+        .address { margin-top: 20px; padding: 10px; border: 1px dashed #ccc; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>LivrerJardiner.fr</h1>
+    </div>
+
+    <div class="content">
+        <p>Bonjour {{ user_name | default('Client') }},</p>
+
+        <p>Merci pour votre commande <strong>#{{ order.id }}</strong> !</p>
+        <p>Nous avons bien enregistré votre commande et nous la préparons pour l'expédition.</p>
+        
+        {% if order.items %}
+        <p>Récapitulatif :</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Article (SKU)</th>
+                    <th>Quantité</th>
+                    <th>Prix Unitaire</th>
+                    <th>Total Ligne</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% set ns = namespace(total=0) %}
+            {% for item in order.items %}
+                <tr>
+                    <td>{{ item.variant_details.get('name', '') if item.variant_details else 'Article inconnu' }} ({{ item.variant_sku }})</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ "%.2f"|format(item.price_at_order|float) }} €</td>
+                    {% set line_total = item.quantity * item.price_at_order|float %}
+                    <td>{{ "%.2f"|format(line_total) }} €</td>
+                    {% set ns.total = ns.total + line_total %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p style="text-align: right; font-weight: bold; margin-top: 10px;">
+            Montant Total Payé : {{ "%.2f"|format(order.total_amount|float) }} €
+        </p>
+        {% endif %}
+        
+        {% if order.delivery_address %}
+        <div class="address">
+            <strong>Adresse de livraison :</strong><br>
+            {{ order.delivery_address.get('recipient_name', user_name) }}<br>
+            {{ order.delivery_address.get('street', '') }}<br>
+            {{ order.delivery_address.get('additional_info', '') | replace('None','') }}<br> {# Gérer si additional_info est None #}
+            {{ order.delivery_address.get('zip_code', '') }} {{ order.delivery_address.get('city', '') }}<br>
+            {{ order.delivery_address.get('country', 'France') }}
+            {% if order.delivery_address.get('phone') %}<br>Tél : {{ order.delivery_address.get('phone') }}{% endif %}
+        </div>
+        {% else %}
+        <p><strong>Attention:</strong> Aucune adresse de livraison n'a été spécifiée pour cette commande.</p>
+        {% endif %}
+
+        <p>Vous pouvez suivre l'état d'avancement de votre commande dans votre espace client sur notre site.</p>
+    </div>
+
+    <div class="footer">
+        <p>Merci de votre confiance,</p>
+        <p>L'équipe LivrerJardiner.fr</p>
+        <p><a href="https://livrerjardiner.fr">livrerjardiner.fr</a></p>
+    </div>
+</body>
+</html> 
