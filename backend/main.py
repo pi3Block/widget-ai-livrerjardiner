@@ -815,8 +815,8 @@ async def list_my_quotes(
 @app.patch("/quotes/{quote_id}/status", response_model=models.Quote)
 async def update_quote_status_endpoint(
     quote_id: int,
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],  # Déplacé avant les paramètres avec '='
     status_update: str = Body(..., embed=True, alias="status"),
-    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],
     db: AsyncSession = Depends(get_db_session)
 ):
     """Met à jour le statut d'un devis."""
@@ -925,8 +925,8 @@ async def list_my_orders(
 @app.patch("/orders/{order_id}/status", response_model=models.Order)
 async def update_order_status_endpoint(
     order_id: int,
+    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)], # Déplacé
     status_update: str = Body(..., embed=True, alias="status"),
-    current_user_db: Annotated[models.UserDB, Depends(auth.get_current_active_user)],
     db: AsyncSession = Depends(get_db_session)
 ):
     """Met à jour le statut d'une commande."""

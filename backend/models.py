@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, Json
+from pydantic import BaseModel, EmailStr, Field, Json, ConfigDict
 from typing import Optional, List, Any, Dict
 from datetime import datetime
 from decimal import Decimal # Pour les prix
@@ -165,7 +165,7 @@ class AddressUpdate(BaseModel):
     zip_code: Optional[str] = None
     country: Optional[str] = None
 
-class AddressDBBase(AddressBase):
+class Address(AddressBase):
     id: int
     user_id: int
     is_default: bool
@@ -175,27 +175,6 @@ class AddressDBBase(AddressBase):
     model_config = ConfigDict(
         from_attributes=True
     )
-
-class AddressDB(Base):
-    __tablename__ = "addresses"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
-    street: Mapped[str] = mapped_column(String(255))
-    city: Mapped[str] = mapped_column(String(100))
-    zip_code: Mapped[str] = mapped_column(String(20))
-    country: Mapped[str] = mapped_column(String(100))
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    # Relation inverse
-    user: Mapped["UserDB"] = relationship(back_populates="addresses")
-
-    # Relation pour les commandes (livraison)
-    delivery_orders: Mapped[List["OrderDB"]] = relationship("OrderDB", back_populates="delivery_address", foreign_keys="OrderDB.delivery_address_id")
-    # Relation pour les commandes (facturation)
-    billing_orders: Mapped[List["OrderDB"]] = relationship("OrderDB", back_populates="billing_address", foreign_keys="OrderDB.billing_address_id")
 
 class UserBase(OrmBaseModel):
     email: EmailStr
@@ -215,7 +194,7 @@ class User(UserBase):
     is_admin: bool # Ajouté pour correspondre à UserDB
     created_at: datetime
     updated_at: datetime
-    addresses: List[AddressDBBase] = [] # Relation chargée via ORM
+    addresses: List[Address] = [] # Relation chargée via ORM
 
 # ======================================================
 # Models: Categories & Tags

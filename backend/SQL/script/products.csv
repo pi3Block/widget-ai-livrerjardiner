@@ -1,0 +1,10 @@
+product_name,product_base_description,category_id,variant_sku,variant_attributes,variant_price,variant_image_url,stock_quantity,stock_alert_threshold
+Rosier,"Rosier générique pour massifs et bordures",1,ROS-RG-STD,"{""couleur"": ""rouge vif"", ""parfum"": ""léger""}",5.00,https://example.com/images/rosier-rouge-std.jpg,80,10
+Rosier,"Rosier générique pour massifs et bordures",1,ROS-RG-GRIMP,"{""couleur"": ""rouge vif"", ""type"": ""grimpant""}",7.50,https://example.com/images/rosier-rouge-grimp.jpg,20,5
+Rosier,"Rosier générique pour massifs et bordures",1,ROS-BL-STD,"{""couleur"": ""blanc élégant"", ""parfum"": ""intense""}",6.00,https://example.com/images/rosier-blanc-std.jpg,50,10
+Arbuste Persistant,"Arbuste vert toute l'année, idéal pour haies",2,ARB-PERS-BUIS,"{""espece"": ""Buis"", ""taille"": ""moyen""}",15.00,https://example.com/images/arbuste-buis.jpg,30,5
+Tulipe,"Fleur à bulbe printanière",3,FLE-TUL-JA,"{""couleur"": ""jaune éclatant"", ""hauteur"": ""30cm""}",2.50,https://example.com/images/tulipe-jaune.jpg,150,20
+Tulipe,"Fleur à bulbe printanière",3,FLE-TUL-RO,"{""couleur"": ""rose"", ""hauteur"": ""35cm""}",2.75,https://example.com/images/tulipe-rose.jpg,50,10
+Lavande,"Plante aromatique pour bordures et rocailles",3,LAV-PROV-STD,"{""variete"": ""Provence"", ""parfum"": ""fort""}",4.00,https://example.com/images/lavande.jpg,80,15
+Arrosoir,"Outil d'arrosage",4,OUT-ARR-5L-VE,"{""capacite_L"": 5, ""couleur"": ""vert"", ""matiere"": ""plastique""}",12.00,https://example.com/images/arrosoir-vert.jpg,20,5
+Pelle de Jardin,"Outil pour creuser et planter",4,OUT-PEL-JRD-RB,"{""matiere"": ""acier inoxydable"", ""manche"": ""bois"", ""usage"": ""robuste""}",18.00,https://example.com/images/pelle-jardin.jpg,15,5

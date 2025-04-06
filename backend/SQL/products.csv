@@ -1,8 +1,0 @@
-reference,name,description,category,unit_price,image_url,quantity
-ROS-001,Rosier Rouge,"Rosier rouge vif, idéal pour les jardins",Rosiers,5.00,https://example.com/images/rosier-rouge.jpg,100
-ROS-002,Rosier Blanc,"Rosier blanc élégant",Rosiers,6.00,https://example.com/images/rosier-blanc.jpg,50
-ARB-001,Arbuste Persistant,"Arbuste vert toute l'année",Arbustes,15.00,https://example.com/images/arbuste-persistant.jpg,30
-FLE-001,Tulipe Jaune,"Tulipe jaune éclatante",Fleurs,2.50,https://example.com/images/tulipe-jaune.jpg,200
-FLE-002,Lavande,"Lavande parfumée pour bordures",Fleurs,4.00,https://example.com/images/lavande.jpg,80
-OUT-001,Arrosoir Vert,"Arrosoir de 5L, couleur verte",Outils,12.00,https://example.com/images/arrosoir-vert.jpg,20
-OUT-002,Pelle de Jardin,"Pelle robuste pour le jardinage",Outils,18.00,https://example.com/images/pelle-jardin.jpg,15

@@ -17,7 +17,6 @@ from sqlalchemy.orm import selectinload, joinedload # Pour eager loading
 from fastcrud import FastCRUD
 from sqlalchemy import func as sql_func, distinct, or_, and_, String as SQLString, cast
 from sqlalchemy import update as sqlalchemy_update # Renommer pour éviter conflit avec crud update
-import timezone
 from sqlalchemy.future import select as future_select # Pour select avec options
 
 # --- Importer la configuration DB (gardé pour le moment) ---
@@ -76,8 +75,9 @@ async def create_user(db: AsyncSession, user_in: models.UserCreate) -> models.Us
     """Crée un nouvel utilisateur en utilisant SQLAlchemy et FastCRUD."""
     logger.debug(f"[CRUD_V2] Création utilisateur: {user_in.email}")
 
-    # 1. Vérifier si l'email existe déjà en utilisant FastCRUD
-    existing_user = await crud_user.get_by_field(db=db, field="email", value=user_in.email)
+    # 1. Vérifier si l'email existe déjà en utilisant FastCRUD (get_multi avec filtre par argument nommé)
+    existing_user_result = await crud_user.get_multi(db=db, email=user_in.email, limit=1)
+    existing_user = existing_user_result.data[0] if existing_user_result.data else None
     if existing_user:
         logger.warning(f"[CRUD_V2] Tentative de création d'un utilisateur avec email existant: {user_in.email}")
         raise HTTPException(status_code=409, detail="Un compte avec cet email existe déjà.")
@@ -111,10 +111,10 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
     """Authentifie un utilisateur par email et mot de passe en utilisant SQLAlchemy/FastCRUD."""
     logger.debug(f"[CRUD_V2] Tentative d'authentification pour: {email}")
 
-    # 1. Récupérer l'utilisateur par email via FastCRUD
-    #    Note: S'assure que le modèle UserDB charge bien le password_hash.
+    # 1. Récupérer l'utilisateur par email via FastCRUD (get_multi avec filtre par argument nommé)
     try:
-        user_db = await crud_user.get_by_field(db=db, field="email", value=email)
+        user_db_result = await crud_user.get_multi(db=db, email=email, limit=1)
+        user_db = user_db_result.data[0] if user_db_result.data else None
     except Exception as e:
         # Gérer les erreurs potentielles lors de la récupération
         logger.error(f"[CRUD_V2] Erreur DB lors de la recherche de l'utilisateur {email}: {e}", exc_info=True)
@@ -146,7 +146,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[models.User
         user_db = await crud_user.get(db=db, id=user_id)
         if not user_db:
             logger.warning(f"[CRUD_V2] User ID {user_id} non trouvé.")
-                return None
+            return None # Correction de l'indentation
         return user_db
     except Exception as e:
         logger.error(f"[CRUD_V2] Erreur lors de la récupération de l'utilisateur ID {user_id}: {e}", exc_info=True)
@@ -369,12 +369,14 @@ async def get_tag_by_name(db: AsyncSession, name: str) -> Optional[models.TagDB]
     """Récupère un tag par son nom en utilisant FastCRUD."""
     logger.debug(f"[CRUD_V3] Recherche tag par nom: {name}")
     try:
-        tag_db = await crud_tag.get_by_field(db=db, field="name", value=name)
+        # Utiliser get_multi avec filtre par argument nommé et limite
+        tag_result = await crud_tag.get_multi(db=db, name=name, limit=1)
+        tag_db = tag_result.data[0] if tag_result.data else None
         return tag_db # Retourne None si non trouvé
     except Exception as e:
         logger.error(f"[CRUD_V3] Erreur lors de la recherche du tag '{name}': {e}", exc_info=True)
         # Ne pas lever d'HTTPException ici, car utilisé en interne. Laisser remonter l'erreur.
-         raise
+        raise # Remonter l'exception pour la gestion transactionnelle
 
 async def create_tag(db: AsyncSession, tag_in: models.TagCreate) -> models.TagDB:
     """Crée un nouveau tag en utilisant FastCRUD. Gère l'unicité."""
@@ -386,15 +388,15 @@ async def create_tag(db: AsyncSession, tag_in: models.TagCreate) -> models.TagDB
     except Exception as e:
          # Vérifier si l'erreur est due à la contrainte UNIQUE
         if "UniqueViolationError" in str(e) or "duplicate key value violates unique constraint" in str(e):
-             logger.warning(f"[CRUD_V3] Tentative de création du tag '{tag_in.name}' qui existe déjà.")
-             # Si le tag existe déjà, on le récupère et le retourne
-             existing_tag = await get_tag_by_name(db, tag_in.name)
-             if existing_tag:
-                 return existing_tag
-             else:
-                 # Situation anormale
-                 logger.error(f"[CRUD_V3] Erreur Integrity lors création tag '{tag_in.name}', mais impossible de le récupérer.")
-                 raise HTTPException(status_code=500, detail=f"Erreur lors de la création/récupération du tag '{tag_in.name}'.")
+            logger.warning(f"[CRUD_V3] Tentative de création du tag '{tag_in.name}' qui existe déjà.")
+            # Si le tag existe déjà, on le récupère et le retourne
+            existing_tag = await get_tag_by_name(db, tag_in.name)
+            if existing_tag:
+                return existing_tag
+            else:
+                # Situation anormale
+                logger.error(f"[CRUD_V3] Erreur Integrity lors création tag '{tag_in.name}', mais impossible de le récupérer.")
+                raise HTTPException(status_code=500, detail=f"Erreur lors de la création/récupération du tag '{tag_in.name}'.")
         else:
             logger.error(f"[CRUD_V3] Erreur inattendue lors de la création du tag '{tag_in.name}': {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Erreur interne lors de la création du tag.")
@@ -436,7 +438,14 @@ async def get_product_variant_by_sku(db: AsyncSession, sku: str) -> Optional[mod
     try:
         # Charger la relation 'tags' en même temps
         options = [selectinload(models.ProductVariantDB.tags)]
-        variant_db = await crud_product_variant.get_by_field(db=db, field="sku", value=sku, options=options)
+        # Utiliser get_multi avec filtre par argument nommé et limite
+        variant_result = await crud_product_variant.get_multi(
+            db=db, 
+            sku=sku, 
+            limit=1, 
+            options=options
+        )
+        variant_db = variant_result.data[0] if variant_result.data else None
         if not variant_db:
             logger.warning(f"[CRUD_V3] Variation SKU {sku} non trouvée.")
             return None
@@ -472,7 +481,7 @@ async def update_stock_for_variant(db: AsyncSession, variant_id: int, quantity_c
         .where(models.StockDB.product_variant_id == variant_id)
         .values(
             quantity=models.StockDB.quantity + quantity_change,
-            last_updated=datetime.now(timezone.utc) # Assurer la timezone UTC
+            last_updated=datetime.now(datetime.timezone.utc) # Utiliser datetime.timezone.utc
             )
         .returning(models.StockDB.quantity, models.StockDB.product_variant_id) # Retourner les valeurs mises à jour
         # .execution_options(synchronize_session=False) # Optionnel
@@ -610,7 +619,7 @@ async def get_quote_by_id(db: AsyncSession, quote_id: int) -> Optional[models.Qu
 
         if not quote_db:
             logger.warning(f"[CRUD_V2] Devis ID {quote_id} non trouvé.")
-                return None
+            return None # Correction de l'indentation
 
         logger.debug(f"[CRUD_V2] Devis ID {quote_id} récupéré avec {len(quote_db.items)} lignes.")
         return quote_db
@@ -651,7 +660,7 @@ async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> m
         stmt = (
             sqlalchemy_update(models.QuoteDB)
             .where(models.QuoteDB.id == quote_id)
-            .values(status=status, updated_at=datetime.now(timezone.utc))
+            .values(status=status, updated_at=datetime.now(datetime.timezone.utc)) # Utiliser datetime.timezone.utc
             # .execution_options(synchronize_session=False)
             .returning(models.QuoteDB.id) # Vérifier que l'update a eu lieu
         )
@@ -660,15 +669,15 @@ async def update_quote_status(db: AsyncSession, quote_id: int, status: str) -> m
 
         if updated_id is None:
             logger.warning(f"[CRUD_V3] Devis ID {quote_id} non trouvé pour mise à jour statut.")
-                raise HTTPException(status_code=404, detail=f"Devis ID {quote_id} non trouvé.")
-                
+            raise HTTPException(status_code=404, detail=f"Devis ID {quote_id} non trouvé.")
+
         # Le commit est géré par get_db_session
         logger.info(f"[CRUD_V3] Statut du devis ID {quote_id} mis à jour à '{status}'.")
 
         # Recharger le devis pour retourner l'état complet mis à jour
         updated_quote = await get_quote_by_id(db, quote_id)
         if not updated_quote: # Ne devrait pas arriver
-             raise HTTPException(status_code=500, detail="Erreur interne: Impossible de récupérer le devis après mise à jour.")
+            raise HTTPException(status_code=500, detail="Erreur interne: Impossible de récupérer le devis après mise à jour.")
         return updated_quote
 
     except HTTPException as http_exc:
@@ -829,7 +838,7 @@ async def get_order_by_id(db: AsyncSession, order_id: int) -> Optional[models.Or
 
         if not order_db:
             logger.warning(f"[CRUD_V2] Commande ID {order_id} non trouvée.")
-                return None
+            return None
                 
         logger.debug(f"[CRUD_V2] Commande ID {order_id} récupérée avec {len(order_db.items)} lignes.")
         return order_db
@@ -867,7 +876,7 @@ async def update_order_status(db: AsyncSession, order_id: int, status: str) -> m
         stmt = (
             sqlalchemy_update(models.OrderDB)
             .where(models.OrderDB.id == order_id)
-            .values(status=status, updated_at=datetime.now(timezone.utc))
+            .values(status=status, updated_at=datetime.now(datetime.timezone.utc)) # Utiliser datetime.timezone.utc
             .returning(models.OrderDB.id)
         )
         result = await db.execute(stmt)
@@ -875,14 +884,14 @@ async def update_order_status(db: AsyncSession, order_id: int, status: str) -> m
 
         if updated_id is None:
             logger.warning(f"[CRUD_V3] Commande ID {order_id} non trouvée pour mise à jour statut.")
-                raise HTTPException(status_code=404, detail=f"Commande ID {order_id} non trouvée.")
+            raise HTTPException(status_code=404, detail=f"Commande ID {order_id} non trouvée.")
                 
         logger.info(f"[CRUD_V3] Statut de la commande ID {order_id} mis à jour à '{status}'.")
 
         # Recharger la commande pour retourner l'état complet
         updated_order = await get_order_by_id(db, order_id)
         if not updated_order:
-             raise HTTPException(status_code=500, detail="Erreur interne: Impossible de récupérer la commande après mise à jour.")
+            raise HTTPException(status_code=500, detail="Erreur interne: Impossible de récupérer la commande après mise à jour.")
         return updated_order
 
     except HTTPException as http_exc:

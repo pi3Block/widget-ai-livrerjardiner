@@ -20,6 +20,13 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD") # Pas de défaut
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost") # Ajouter si différent de localhost
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")     # Ajouter si différent de 5432
 
+# Option pour afficher les logs SQL (True/False), défaut False
+DB_ECHO_LOG = os.getenv("DB_ECHO_LOG", "False").lower() in ('true', '1', 't')
+
+# Taille du pool de connexions et dépassement autorisé
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5")) # Nombre de connexions maintenues
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10")) # Connexions supplémentaires si pool plein
+
 # --- Configuration LLM ---
 # Nom du modèle Meta (LLaMA) à utiliser via Ollama
 META_MODEL_NAME = os.getenv("META_MODEL_NAME", "llama3") # Ex: "llama3", "llama2", etc.
@@ -47,13 +54,6 @@ except (ValueError, TypeError):
 logger.info(f"Config chargée: SENDER_EMAIL={SENDER_EMAIL}, SMTP_HOST={SMTP_HOST}, SMTP_PORT={SMTP_PORT}")
 logger.info(f"Config chargée: POSTGRES_DB={POSTGRES_DB}, POSTGRES_USER={POSTGRES_USER}")
 logger.info(f"Config LLM: META_MODEL_NAME={META_MODEL_NAME}, OLLAMA_BASE_URL={OLLAMA_BASE_URL}")
-
-# Configuration de la base de données PostgreSQL
-POSTGRES_USER = os.getenv("POSTGRES_USER", "default_user")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD") # Important: Pas de valeur par défaut pour le mot de passe
-POSTGRES_DB = os.getenv("POSTGRES_DB", "default_db")
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost") # Ajout d'un host par défaut
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")      # Ajout d'un port par défaut
 
 # Configuration Ollama (si nécessaire de spécifier l'URL)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

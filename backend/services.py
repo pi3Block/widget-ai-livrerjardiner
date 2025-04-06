@@ -1,11 +1,12 @@
 import logging
-import os
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-# --- Importer la config SMTP --- 
-import config
+
+import config # Pour les configurations SMTP
+import models # Ajout de l'import manquant
 
 # Importer la classe SMTP depuis utils
 from utils import SMTPHostinger
