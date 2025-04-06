@@ -1,7 +1,6 @@
-from pydantic import BaseModel, EmailStr, Field, Json, ConfigDict
 from typing import Optional, List, Any, Dict
 from datetime import datetime
-from decimal import Decimal # Pour les prix
+from decimal import Decimal # Gardé pour les types SQLAlchemy Numeric
 
 # Imports SQLAlchemy
 from sqlalchemy import (
@@ -135,300 +134,11 @@ class ProductVariantDB(Base):
     # Relation One-to-Many vers StockMovementDB
     stock_movements: Mapped[List["StockMovementDB"]] = relationship(back_populates="variant")
 
-# ======================================================
-# Models Pydantic (Utilisés pour l'API et la validation)
-# ======================================================
-
-# Configuration commune pour activer ORM mode (renommé en from_attributes)
-class OrmBaseModel(BaseModel):
-    class Config:
-        # orm_mode = True
-        from_attributes = True # Remplacer orm_mode
-
-# ======================================================
-# Models: Users & Addresses
-# ======================================================
-
-class AddressBase(OrmBaseModel):
-    street: str
-    city: str
-    zip_code: str
-    country: str
-    is_default: bool = False
-
-class AddressCreate(AddressBase):
-    pass
-
-class AddressUpdate(BaseModel):
-    street: Optional[str] = None
-    city: Optional[str] = None
-    zip_code: Optional[str] = None
-    country: Optional[str] = None
-
-class Address(AddressBase):
-    id: int
-    user_id: int
-    is_default: bool
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(
-        from_attributes=True
-    )
-
-class UserBase(OrmBaseModel):
-    email: EmailStr
-    name: Optional[str] = None
-
-class UserCreate(UserBase):
-    password: str # Mot de passe en clair lors de la création/login
-
-# --- Schéma UserUpdate (Nouveau) ---
-class UserUpdate(BaseModel):
-    name: Optional[str] = None
-    # Note: email, password, is_admin ne sont typiquement pas modifiés ici
-    # Des endpoints dédiés seraient plus sûrs.
-
-class User(UserBase):
-    id: int
-    is_admin: bool # Ajouté pour correspondre à UserDB
-    created_at: datetime
-    updated_at: datetime
-    addresses: List[Address] = [] # Relation chargée via ORM
-
-# ======================================================
-# Models: Categories & Tags
-# ======================================================
-
-class CategoryBase(OrmBaseModel):
-    name: str
-    description: Optional[str] = None
-    parent_category_id: Optional[int] = None
-
-class CategoryCreate(CategoryBase):
-    pass
-
-# --- Schéma CategoryUpdate (Nouveau) ---
-class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    parent_category_id: Optional[int] = None
-
-class Category(CategoryBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-    # Pourrait avoir sub_categories: List['Category'] = [] si nécessaire
-
-class TagBase(OrmBaseModel):
-    name: str
-
-class TagCreate(TagBase):
-    pass
-
-class Tag(TagBase):
-    id: int
-
-# ======================================================
-# Models: Products & Variants
-# ======================================================
-
-class ProductBase(OrmBaseModel):
-    name: str
-    base_description: Optional[str] = None
-    category_id: Optional[int] = None
-
-class ProductCreate(ProductBase):
-    pass
-
-# --- Schéma ProductUpdate (Nouveau) ---
-class ProductUpdate(BaseModel):
-    name: Optional[str] = None
-    base_description: Optional[str] = None
-    category_id: Optional[int] = None
-
-# Modèle pour les variations de produit
-class ProductVariantBase(OrmBaseModel):
-    sku: str
-    attributes: Optional[Dict[str, Any]] = None
-    price: Decimal
-    image_url: Optional[str] = None
-    # product_id est géré lors de la création
-
-class ProductVariantCreate(ProductVariantBase):
-    product_id: int # Requis à la création
-
-# --- Schéma ProductVariantUpdate (Nouveau) ---
-class ProductVariantUpdate(BaseModel):
-    # sku: Optional[str] = None # SKU ne devrait pas changer
-    attributes: Optional[Dict[str, Any]] = None
-    price: Optional[Decimal] = None
-    image_url: Optional[str] = None
-    # product_id ne devrait pas changer
-
-class ProductVariant(ProductVariantBase):
-    id: int
-    product_id: int
-    created_at: datetime
-    updated_at: datetime
-    tags: List[Tag] = []
-    # stock: Optional[Stock] = None # Ajouter si le schéma Stock Pydantic existe
-
-# Modèle complet du produit avec ses variations
-class Product(ProductBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-    category: Optional[Category] = None # Relation chargée
-    variants: List[ProductVariant] = [] # Relation chargée
-
-# ======================================================
-# Models: Stock & Stock Movements
-# ======================================================
-
-class StockBase(OrmBaseModel):
-    quantity: int
-    stock_alert_threshold: Optional[int] = 10
-
-class Stock(StockBase):
-    product_variant_id: int # Clé primaire et étrangère
-    last_updated: datetime
-    variant: ProductVariant # Relation chargée (optionnel)
-
-# Pas besoin de StockCreate séparé, géré lors de la création de Variant ou via endpoint /restock
-
-class StockMovementBase(OrmBaseModel):
-    product_variant_id: int
-    quantity_change: int
-    movement_type: str # Corresponds à la colonne SQL
-    order_item_id: Optional[int] = None
-
-class StockMovementCreate(StockMovementBase):
-    pass
-
-class StockMovement(StockMovementBase):
-    id: int
-    created_at: datetime
-    # variant: ProductVariant # Relation chargée (optionnel)
-
-# ======================================================
-# Models: Quotes & Quote Items
-# ======================================================
-
-class QuoteItemBase(OrmBaseModel):
-    product_variant_id: int
-    quantity: int
-    price_at_quote: Decimal
-
-class QuoteItemCreate(QuoteItemBase):
-    pass
-
-class QuoteItem(QuoteItemBase):
-    id: int
-    quote_id: int
-    # variant: ProductVariant # Relation chargée
-
-class QuoteBase(OrmBaseModel):
-    user_id: int
-    status: str = Field(default='pending')
-    expires_at: Optional[datetime] = None
-
-class QuoteCreate(QuoteBase):
-    items: List[QuoteItemCreate]
-
-# --- Schéma QuoteUpdate (Nouveau - exemple simple) ---
-class QuoteUpdate(BaseModel):
-    # status est géré par un endpoint dédié
-    expires_at: Optional[datetime] = None
-    # Modifier items d'un devis existant est complexe, 
-    # géré via des endpoints spécifiques si nécessaire.
-
-class Quote(QuoteBase):
-    id: int
-    quote_date: datetime
-    created_at: datetime
-    updated_at: datetime
-    items: List[QuoteItem] = []
-    # user: User # Relation chargée
-
-# ======================================================
-# Models: Orders & Order Items
-# ======================================================
-
-class OrderItemBase(OrmBaseModel):
-    product_variant_id: int
-    quantity: int
-    price_at_order: Decimal
-
-class OrderItemCreate(OrderItemBase):
-    pass
-
-class OrderItem(OrderItemBase):
-    id: int
-    order_id: int
-    # variant: ProductVariant # Relation chargée
-
-class OrderBase(OrmBaseModel):
-    user_id: int
-    delivery_address_id: int
-    billing_address_id: int
-    status: str = Field(default='pending')
-    total_amount: Decimal
-
-class OrderCreate(OrderBase):
-    items: List[OrderItemCreate]
-
-# --- Schéma OrderUpdate (Nouveau - exemple simple) ---
-class OrderUpdate(BaseModel):
-    # status est géré par un endpoint dédié
-    # Modifier items, adresses, total d'une commande existante est généralement interdit
-    # ou soumis à des règles métier strictes (avant expédition etc.)
-    # On le laisse vide pour l'instant, juste pour l'utiliser dans FastCRUD.
-    pass 
-
-class Order(OrderBase):
-    id: int
-    order_date: datetime
-    created_at: datetime
-    updated_at: datetime
-    items: List[OrderItem] = []
-    # user: User # Relation chargée
-    # delivery_address: AddressDBBase # Relation chargée
-    # billing_address: AddressDBBase # Relation chargée
-
-# ======================================================
-# Models: Request Payloads (Exemples)
-# ======================================================
-# Ces modèles seront utilisés dans main.py pour les requêtes API
-
-class CartItem(BaseModel):
-    sku: str # L'utilisateur fournit le SKU de la variation
-    quantity: int
-
-class CreateQuoteRequest(BaseModel):
-    user_email: EmailStr # Ou user_id si l'utilisateur est authentifié
-    items: List[CartItem]
-
-class CreateOrderRequest(BaseModel):
-    user_email: EmailStr # Ou user_id si authentifié
-    items: List[CartItem]
-    delivery_address_id: int
-    billing_address_id: int # Peut être le même que delivery
-    # delivery_method: Optional[str] = "livraison"
-    # payment_token: str # Exemple pour info paiement
-
-# Mise à jour nécessaire pour les types ForwardRef si utilisation de relations circulaires poussée
-# Category.update_forward_refs()
-# Product.update_forward_refs()
-# etc.
-
 class StockDB(Base):
     __tablename__ = "stock"
 
-    # Clé primaire est aussi clé étrangère
-    product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), primary_key=True)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    stock_alert_threshold: Mapped[Optional[int]] = mapped_column(Integer, default=10)
+    product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), primary_key=True, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relation One-to-One vers ProductVariantDB
@@ -439,15 +149,16 @@ class StockMovementDB(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), index=True, nullable=False)
+    order_item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("order_items.id", ondelete="SET NULL"), index=True)
     quantity_change: Mapped[int] = mapped_column(Integer, nullable=False)
-    movement_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    # Lien optionnel vers order_items
-    order_item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("order_items.id", ondelete="SET NULL"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    movement_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    movement_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    related_order_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Relation Many-to-One vers ProductVariantDB
     variant: Mapped["ProductVariantDB"] = relationship(back_populates="stock_movements")
-    # Relation Many-to-One vers OrderItemDB (optionnelle)
+    # Relation Many-to-One vers OrderItemDB (si besoin)
     order_item: Mapped[Optional["OrderItemDB"]] = relationship(back_populates="stock_movements")
 
 class QuoteDB(Base):
@@ -455,11 +166,12 @@ class QuoteDB(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    quote_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default='pending', index=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    total_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # Relation Many-to-One vers UserDB
     user: Mapped["UserDB"] = relationship(back_populates="quotes")
@@ -471,11 +183,9 @@ class QuoteItemDB(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     quote_id: Mapped[int] = mapped_column(Integer, ForeignKey("quotes.id", ondelete="CASCADE"), index=True, nullable=False)
-    product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), index=True, nullable=False)
+    product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="RESTRICT"), index=True, nullable=False) # RESTRICT pour éviter suppression si utilisé
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_at_quote: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     # Relation Many-to-One vers QuoteDB
     quote: Mapped["QuoteDB"] = relationship(back_populates="items")
@@ -487,19 +197,21 @@ class OrderDB(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False)
-    order_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default='pending', index=True)
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    delivery_address_id: Mapped[int] = mapped_column(Integer, ForeignKey("addresses.id", ondelete="RESTRICT"), nullable=False)
-    billing_address_id: Mapped[int] = mapped_column(Integer, ForeignKey("addresses.id", ondelete="RESTRICT"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    order_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
+    delivery_address_id: Mapped[int] = mapped_column(Integer, ForeignKey("addresses.id", ondelete="RESTRICT"), index=True, nullable=False)
+    billing_address_id: Mapped[int] = mapped_column(Integer, ForeignKey("addresses.id", ondelete="RESTRICT"), index=True, nullable=False)
+    shipping_method: Mapped[Optional[str]] = mapped_column(String(100))
+    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0.00)
+    total_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relation Many-to-One vers UserDB
     user: Mapped["UserDB"] = relationship(back_populates="orders")
-    # Relation Many-to-One vers AddressDB (livraison)
+    # Relation Many-to-One vers AddressDB (Delivery)
     delivery_address: Mapped["AddressDB"] = relationship(back_populates="delivery_orders", foreign_keys=[delivery_address_id])
-    # Relation Many-to-One vers AddressDB (facturation)
+    # Relation Many-to-One vers AddressDB (Billing)
     billing_address: Mapped["AddressDB"] = relationship(back_populates="billing_orders", foreign_keys=[billing_address_id])
     # Relation One-to-Many vers OrderItemDB
     items: Mapped[List["OrderItemDB"]] = relationship(back_populates="order", cascade="all, delete-orphan")
@@ -509,16 +221,13 @@ class OrderItemDB(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), index=True, nullable=False)
-    # Utiliser RESTRICT comme dans le SQL
     product_variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("product_variants.id", ondelete="RESTRICT"), index=True, nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_at_order: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
 
     # Relation Many-to-One vers OrderDB
     order: Mapped["OrderDB"] = relationship(back_populates="items")
     # Relation Many-to-One vers ProductVariantDB
     variant: Mapped["ProductVariantDB"] = relationship(back_populates="order_items")
-    # Relation One-to-Many vers StockMovementDB (un OrderItem peut déclencher un mouvement)
+    # Relation One-to-Many vers StockMovementDB
     stock_movements: Mapped[List["StockMovementDB"]] = relationship(back_populates="order_item")

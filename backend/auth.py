@@ -6,23 +6,29 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
-# Importer la session DB et le modèle UserDB
+# Importer la session DB
 from database import get_db_session, AsyncSession
+# Importer les fonctions CRUD
 import crud
-import models
+# Importer les modèles DB uniquement
+import models # Contient maintenant uniquement UserDB, etc.
+# Importer les schémas (même si Token/TokenData sont ici, bonne pratique pour le futur)
+import schemas
+# Importer la configuration
 import config
 
 # Schéma pour les données contenues dans le token JWT
+# Note: Pourrait être déplacé dans schemas.py
 class TokenData(BaseModel):
     user_id: Optional[int] = None
 
 # Schéma pour la réponse de l'endpoint de login
+# Note: Pourrait être déplacé dans schemas.py
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-# Configuration OAuth2 (indique l'URL de l'endpoint de login)
-# "tokenUrl" sera l'endpoint que nous créerons dans main.py pour obtenir le token
+# Configuration OAuth2 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -54,21 +60,23 @@ async def get_current_user_db_from_token(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: AsyncSession = Depends(get_db_session) # Injecter la session DB
 ) -> models.UserDB:
-    """Dépendance FastAPI pour obtenir l'objet UserDB à partir du token JWT."""
+    """Récupère l'objet UserDB depuis le token, lève une exception si invalide/utilisateur non trouvé."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    user_id = decode_access_token(token)
-    if user_id is None:
+    try:
+        user_id = decode_access_token(token)
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
         raise credentials_exception
-        
-    # Utiliser la fonction crud asynchrone
-    user_db = await crud.get_user_by_id(db=db, user_id=user_id)
+    
+    # Utiliser get_user_by_id_with_addresses pour charger la relation
+    user_db = await crud.get_user_by_id_with_addresses(db=db, user_id=user_id)
     
     if user_db is None:
-        # L'utilisateur existait lors de la création du token, mais plus maintenant?
         raise credentials_exception
     return user_db
 

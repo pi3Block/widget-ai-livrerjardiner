@@ -81,13 +81,22 @@ Voici une **roadmap** claire et structurée pour résumer les étapes nécessair
   - La complexité des tests augmente significativement. Prévoir des scénarios de tests variés.
 
 ### 6. Fonctionnalités Avancées et Interface d'Administration
-- **Objectif** : Fournir des outils de gestion et améliorer l'expérience utilisateur.
+- **Objectif** : Fournir des outils de gestion et améliorer l'expérience utilisateur et IA.
 - **Statut** : **À faire**
 - **Actions à réaliser** :
-    - Interface d'Administration
-    - Recherche Avancée (finalisation)
-    - Recommandations
-    - Logique avancée `/chat` (panier, confirmation adresse, etc.)
+    - **[À faire]** Interface d'Administration (pour gérer produits, variations, catégories, tags, commandes, utilisateurs...).
+    - **[À faire]** Recherche Avancée (finalisation et optimisation).
+    - **[À faire]** Système de Recommandations Produits (basé sur historique, etc.).
+    - **[À faire]** **Amélioration Agent IA via RAG (Retrieval-Augmented Generation)**:
+        - Mettre en place un pipeline RAG (probablement avec LangChain) pour permettre au chatbot de répondre à des questions basées sur une base de connaissances externe (ex: PDFs de manuels produits, FAQs sur le jardinage, articles de blog).
+        - Intégrer un Vector Store (ex: ChromaDB, FAISS) pour stocker et rechercher les embeddings des documents.
+        - Choisir et intégrer un modèle d'embeddings (ex: via Hugging Face, OpenAI).
+        - Développer un processus (script, tâche de fond) pour charger, découper et indexer les documents sources dans le Vector Store.
+        - Adapter l'endpoint `/chat` pour détecter les intentions nécessitant des connaissances externes (ex: `question_generale_jardinage`, `info_manuel_produit`) et déclencher le pipeline RAG approprié.
+    - **[À faire]** Logique avancée `/chat` (gestion du panier via chat, confirmation d'adresse avant commande, autres intents complexes non-RAG).
+- **Points d'attention** :
+    - Le RAG ajoute une complexité significative (gestion Vector Store, indexation, coût embeddings/LLM).
+    - L'interface d'admin est cruciale pour la gestion des 1000 références.
 
 ### 7. Surveillance et Maintenance Continue
 - **Objectif** : Assurer la stabilité, la sécurité et la scalabilité à long terme.
