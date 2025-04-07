@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 
 # Import du service applicatif via dépendances
 from src.addresses.application.services import AddressService
@@ -52,12 +52,17 @@ async def add_user_address(
 
 @address_router.get("", response_model=List[schemas.Address])
 async def get_my_addresses(
+    response: Response,
     current_user: Annotated[UserEntity, Depends(get_current_active_user_entity)],
     address_service: Annotated[AddressService, Depends(get_address_service)]
 ):
     logger.info(f"[AddrRouter] Listage adresses pour user ID: {current_user.id}")
     try:
         address_entities = await address_service.list_user_addresses(user_id=current_user.id)
+        total_count = len(address_entities)
+        offset = 0
+        end_range = total_count - 1 if total_count > 0 else 0
+        response.headers["Content-Range"] = f"addresses {offset}-{end_range}/{total_count}"
         return [map_entity_to_schema(addr) for addr in address_entities]
     except Exception as e:
         logger.error(f"[AddrRouter] Erreur listage adresses user {current_user.id}: {e}", exc_info=True)

@@ -1,7 +1,7 @@
 import logging
 from typing import List, Annotated
 
-from fastapi import APIRouter, HTTPException, Depends, Query, status
+from fastapi import APIRouter, HTTPException, Depends, Query, status, Response
 
 # Schemas
 from src.orders.application.schemas import OrderCreate, OrderResponse, OrderUpdate, PaginatedOrderResponse
@@ -58,8 +58,9 @@ async def create_order_endpoint(
         logger.exception(f"Erreur inattendue création commande user {current_user.id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur.")
 
-@order_router.get("/", response_model=PaginatedOrderResponse)
+@order_router.get("/", response_model=List[OrderResponse])
 async def list_user_orders_endpoint(
+    response: Response,
     service: OrderServiceDep,
     current_user: CurrentUser,
     limit: int = Query(default=20, ge=1, le=100),
@@ -67,10 +68,10 @@ async def list_user_orders_endpoint(
 ):
     """Liste les commandes de l'utilisateur authentifié avec pagination."""
     try:
-        orders = await service.list_orders_for_user(user_id=current_user.id, limit=limit, offset=offset)
-        # Pour une vraie pagination, il faudrait aussi compter le total
-        # total_count = await service.count_orders_for_user(user_id=current_user.id)
-        return PaginatedOrderResponse(items=orders, limit=limit, offset=offset, total=len(orders)) # total est simplifié ici
+        orders, total_count = await service.list_orders_for_user(user_id=current_user.id, limit=limit, offset=offset)
+        end_range = offset + len(orders) - 1 if orders else offset
+        response.headers["Content-Range"] = f"orders {offset}-{end_range}/{total_count}"
+        return orders
     except Exception as e:
         logger.exception(f"Erreur listage commandes user {current_user.id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur.")

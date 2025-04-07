@@ -101,14 +101,18 @@ async def list_categories(
     limit, offset, sort_by, sort_desc, filters = params
     logger.info(f"API list_categories: limit={limit}, offset={offset}, sort={sort_by}, desc={sort_desc}, filters={filters}")
     try:
-        # Changed from category_service to product_service
-        categories, total_count = await product_service.list_categories( 
+        # Le service retourne un PaginatedCategoryResponse
+        paginated_result: PaginatedCategoryResponse = await product_service.list_categories( 
             limit=limit, offset=offset, sort_by=sort_by, sort_desc=sort_desc, filters=filters
         )
+        # Extraire le total et les items
+        total_count = paginated_result.total
+        items = paginated_result.items
+        
         # Header Content-Range pour React-Admin
-        end_range = offset + len(categories) - 1 if categories else offset
+        end_range = offset + len(items) - 1 if items else offset
         response.headers["Content-Range"] = f"categories {offset}-{end_range}/{total_count}"
-        return categories
+        return items # Retourner seulement la liste d'items
     except Exception as e:
         logger.error(f"Erreur API list_categories: {e}", exc_info=True)
         # Idéalement, utiliser un exception handler global
@@ -512,10 +516,23 @@ async def create_category_endpoint(category_data: CategoryCreate, service: Produ
         logger.exception(f"Erreur création catégorie: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne.")
 
-@category_router.get("/", response_model=PaginatedCategoryResponse)
-async def list_categories_endpoint(service: ProductServiceDep, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+@category_router.get("/", response_model=List[CategoryResponse])
+async def list_categories_endpoint(
+    response: Response,
+    service: ProductServiceDep, 
+    limit: int = Query(100, ge=1, le=500), 
+    offset: int = Query(0, ge=0)
+):
     try:
-        return await service.list_categories(limit=limit, offset=offset)
+        paginated_result: PaginatedCategoryResponse = await service.list_categories(limit=limit, offset=offset)
+        # Extraire total et items
+        total_count = paginated_result.total
+        items = paginated_result.items
+        
+        # Ajouter l'en-tête Content-Range
+        end_range = offset + len(items) - 1 if items else offset
+        response.headers["Content-Range"] = f"categories {offset}-{end_range}/{total_count}"
+        return items # Retourner seulement la liste d'items
     except Exception as e:
         logger.exception(f"Erreur listage catégories: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne.")
@@ -532,10 +549,23 @@ async def create_tag_endpoint(tag_data: TagCreate, service: ProductServiceDep):
         logger.exception(f"Erreur création tag: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne.")
 
-@tags_router.get("/", response_model=PaginatedTagResponse)
-async def list_tags_endpoint(service: ProductServiceDep, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+@tags_router.get("/", response_model=List[TagResponse])
+async def list_tags_endpoint(
+    response: Response,
+    service: ProductServiceDep, 
+    limit: int = Query(100, ge=1, le=500), 
+    offset: int = Query(0, ge=0)
+):
     try:
-        return await service.list_tags(limit=limit, offset=offset)
+        paginated_result: PaginatedTagResponse = await service.list_tags(limit=limit, offset=offset)
+        # Extraire total et items
+        total_count = paginated_result.total
+        items = paginated_result.items
+        
+        # Ajouter l'en-tête Content-Range
+        end_range = offset + len(items) - 1 if items else offset
+        response.headers["Content-Range"] = f"tags {offset}-{end_range}/{total_count}"
+        return items # Retourner seulement la liste d'items
     except Exception as e:
         logger.exception(f"Erreur listage tags: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne.")

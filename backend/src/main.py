@@ -1,4 +1,9 @@
 import logging
+
+# Configurer le logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 from typing import Optional, List, Annotated, Any, Dict, Tuple
 from fastapi import FastAPI, HTTPException, Depends, status, Response, Body, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,9 +55,7 @@ from .products.interfaces.api import product_router, category_router, tags_route
 from .quotes.interfaces.api import quote_router
 from .orders.interfaces.api import order_router
 
-# Configurer le logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+
 
 app = FastAPI(
     title="LivrerJardiner API",

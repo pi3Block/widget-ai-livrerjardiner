@@ -69,10 +69,29 @@ class ProductService:
         
         return ProductResponse.model_validate(product_entity)
 
-    async def list_products(self, limit: int, offset: int, filter_params: Optional[Dict[str, Any]] = None, include_relations: List[str] = []) -> PaginatedProductResponse:
-        """Liste les produits avec filtres, pagination et chargement de relations."""
-        logger.debug(f"[ProductService] Listage produits, limit={limit}, offset={offset}, filters={filter_params}, include={include_relations}")
-        product_entities, total_count = await self.product_repo.list_all(limit, offset, filter_params, include_relations)
+    async def list_products(
+        self, 
+        limit: int, 
+        offset: int, 
+        category_id: Optional[int] = None,
+        tag_names: Optional[List[str]] = None,
+        search_term: Optional[str] = None,
+        include_relations: List[str] = []
+    ) -> PaginatedProductResponse:
+        """Liste les produits avec filtres spécifiques, pagination et chargement de relations."""
+        # Construire les filtres pour le repo à partir des paramètres
+        repo_filters = {}
+        if category_id is not None:
+            repo_filters['category_id'] = category_id
+        if tag_names:
+            repo_filters['tag_names'] = tag_names # Le repo devra gérer ce filtre
+        if search_term:
+            repo_filters['search_term'] = search_term # Le repo devra gérer ce filtre
+        # Ajouter d'autres filtres si nécessaire depuis l'ancien filter_params
+
+        logger.debug(f"[ProductService] Listage produits, limit={limit}, offset={offset}, filters={repo_filters}, include={include_relations}")
+        
+        product_entities, total_count = await self.product_repo.list_all(limit, offset, repo_filters, include_relations)
         product_responses = [ProductResponse.model_validate(p) for p in product_entities]
         
         # Charger le stock pour les variantes si demandé implicitement par la réponse
@@ -291,13 +310,31 @@ class ProductService:
             logger.error(f"[ProductService] Erreur MAJ stock variante {variant_id}: {e}", exc_info=True)
             raise InvalidOperationException(f"Erreur interne MAJ stock: {e}")
             
-    # --- Méthodes pour Catégories --- (Simplifié pour l'instant)
-    
-    async def list_categories(self, limit: int = 100, offset: int = 0) -> PaginatedCategoryResponse:
-         logger.debug("[ProductService] Listage catégories.")
-         categories = await self.category_repo.list_all(limit, offset)
-         # TODO: Compter total via repo
-         return PaginatedCategoryResponse(items=[CategoryResponse.model_validate(c) for c in categories], total=len(categories))
+    # --- Méthodes pour Catégories --- 
+    # (Ajout de la méthode manquante get_category)
+    async def get_category(self, category_id: int) -> Optional[CategoryResponse]:
+        """Récupère une catégorie par son ID."""
+        logger.debug(f"[ProductService] Récupération catégorie ID: {category_id}")
+        category_entity = await self.category_repo.get_by_id(category_id)
+        if not category_entity:
+            return None
+        return CategoryResponse.model_validate(category_entity)
+
+    async def list_categories(self, limit: int = 100, offset: int = 0, sort_by: Optional[str] = None, sort_desc: bool = False, filters: Optional[Dict[str, Any]] = None) -> PaginatedCategoryResponse:
+         """Liste les catégories avec filtres, tri et pagination."""
+         logger.debug(f"[ProductService] Listage catégories: limit={limit}, offset={offset}, sort_by={sort_by}, sort_desc={sort_desc}, filters={filters}")
+         
+         # Passer tous les arguments au repository
+         categories, total_count = await self.category_repo.list(
+             limit=limit, 
+             offset=offset, 
+             sort_by=sort_by, 
+             sort_desc=sort_desc, 
+             filters=filters
+         )
+         
+         # Utiliser le total_count retourné par le repository
+         return PaginatedCategoryResponse(items=[CategoryResponse.model_validate(c) for c in categories], total=total_count)
          
     async def create_category(self, category_data: CategoryCreate) -> CategoryResponse:
          logger.info(f"[ProductService] Tentative création catégorie: {category_data.name}")

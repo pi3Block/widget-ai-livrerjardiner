@@ -47,19 +47,13 @@ class QuoteService:
         return QuoteResponse.model_validate(quote_entity)
 
     async def list_user_quotes(self, user_id: int, limit: int, offset: int) -> Tuple[List[QuoteResponse], int]:
-        """Liste les devis pour un utilisateur spécifique."""
+        """Liste les devis pour un utilisateur spécifique et retourne le compte total."""
         logger.debug(f"[QuoteService] Listage devis pour user ID: {user_id}, limit: {limit}, offset: {offset}")
         # Le repo gère déjà le filtrage par user_id
         quote_entities = await self.quote_repo.list_for_user(user_id, limit, offset)
-        # Compter le total (pourrait nécessiter une méthode repo séparée ou être retourné par list_for_user)
-        # Pour l'instant, on assume que le repo ne retourne pas le total, on le calcule basiquement.
-        # !! TODO: Améliorer le comptage pour la pagination !!
-        total_count = len(quote_entities) # Approximation temporaire!
-        if offset == 0 and len(quote_entities) < limit:
-             pass # On a probablement tous les résultats
-        else:
-             # Idéalement, le repo compterait: total = await self.quote_repo.count_for_user(user_id)
-             logger.warning("[QuoteService] Le comptage total des devis pour la pagination est approximatif.")
+        
+        # Obtenir le compte total via une méthode dédiée du repository
+        total_count = await self.quote_repo.count_for_user(user_id)
         
         quote_responses = [QuoteResponse.model_validate(q) for q in quote_entities]
         return quote_responses, total_count

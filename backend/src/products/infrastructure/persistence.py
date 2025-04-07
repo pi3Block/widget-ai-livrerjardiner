@@ -2,6 +2,7 @@ import logging
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 
+import sqlalchemy
 from sqlalchemy import select, func, update as sqlalchemy_update, delete as sqlalchemy_delete, case
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,12 +53,21 @@ class SQLAlchemyCategoryRepository(AbstractCategoryRepository):
         logger.debug(f"Catégorie avec nom '{name}' non trouvée dans get_by_name().")
         return None
 
+    async def get_by_id(self, category_id: int) -> Optional[Category]:
+        """Récupère une catégorie par son ID."""
+        stmt = select(models.CategoryDB).where(models.CategoryDB.id == category_id)
+        result = await self.session.execute(stmt)
+        category_db = result.scalar_one_or_none()
+        if category_db:
+            return Category.model_validate(category_db)
+        return None
+
     async def list(self, limit: int, offset: int, sort_by: Optional[str], sort_desc: bool, filters: Optional[Dict[str, Any]]) -> Tuple[List[Category], int]:
         """Liste les catégories avec pagination, tri et filtres."""
         # Requête de base pour sélectionner les catégories
         stmt_select = select(models.CategoryDB)
         # Requête de base pour compter le nombre total (avant pagination)
-        stmt_count = select(func.count()).select_from(models.CategoryDB)
+        stmt_count = select(sqlalchemy.func.count(models.CategoryDB.id)).select_from(models.CategoryDB)
 
         # Appliquer les filtres (inspiré de parse_react_admin_params et crud.list_categories)
         if filters:
@@ -344,7 +354,7 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
                 selectinload(models.ProductVariantDB.tags)
             )
         )
-        stmt_count = select(func.count(models.ProductDB.id)).select_from(models.ProductDB)
+        stmt_count = select(sqlalchemy.func.count(models.ProductDB.id)).select_from(models.ProductDB)
         
         # --- Apply Filters --- 
         if category_id is not None:
@@ -515,30 +525,30 @@ class SQLAlchemyProductRepository(AbstractProductRepository):
 # --- SQLAlchemyProductVariantRepository ---
 
 class SQLAlchemyProductVariantRepository(AbstractProductVariantRepository):
-    """Implémentation SQLAlchemy du repository de Variantes Produit."""
-    
+    """Implémentation SQLAlchemy du repository des Variantes de Produit."""
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
     async def _get_variant_db(self, variant_id: int = None, sku: str = None) -> Optional[models.ProductVariantDB]:
-        """Helper pour récupérer l'objet DB de la variante avec son stock."""
+        """Helper interne pour récupérer l'objet DB de la variante par ID ou SKU."""
+        stmt = select(models.ProductVariantDB)
         if variant_id:
-            stmt = select(models.ProductVariantDB).where(models.ProductVariantDB.id == variant_id)
+            stmt = stmt.where(models.ProductVariantDB.id == variant_id)
         elif sku:
-            stmt = select(models.ProductVariantDB).where(models.ProductVariantDB.sku == sku)
+            stmt = stmt.where(models.ProductVariantDB.sku == sku)
         else:
-            return None
-        
-        stmt = stmt.options(selectinload(models.ProductVariantDB.stock))
+            return None # Doit spécifier au moins un critère
+
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get(self, variant_id: int) -> Optional[ProductVariant]:
+    async def get_by_id(self, variant_id: int) -> Optional[ProductVariant]:
         """Récupère une variante par son ID."""
         variant_db = await self._get_variant_db(variant_id=variant_id)
         if variant_db:
             return ProductVariant.model_validate(variant_db)
-        logger.debug(f"Variante ID {variant_id} non trouvée dans get().")
+        logger.warning(f"Variante ID {variant_id} non trouvée.")
         return None
 
     async def get_by_sku(self, sku: str) -> Optional[ProductVariant]:
@@ -775,3 +785,23 @@ class SQLAlchemyStockRepository(AbstractStockRepository):
             await self.session.rollback()
             logger.error(f"Erreur inattendue SET stock variante {variant_id}: {e}", exc_info=True)
             raise 
+
+    async def list_low_stock(self, threshold: int, limit: int = 100) -> List[Stock]:
+        """Liste les stocks en dessous d'un certain seuil."""
+        logger.debug(f"[Repo Stock] Recherche stock < {threshold} (limite: {limit})")
+        stmt = select(models.StockDB)\
+               .where(models.StockDB.quantity < threshold)\
+               .order_by(models.StockDB.quantity.asc(), models.StockDB.product_variant_id.asc())\
+               .limit(limit)\
+               .options(selectinload(models.StockDB.product_variant)) # Charger la variante pour infos
+
+        try:
+            result = await self.session.execute(stmt)
+            stocks_db = result.scalars().all()
+            # Mapper vers entités domaine
+            low_stocks = [Stock.model_validate(s_db) for s_db in stocks_db]
+            logger.debug(f"Trouvé {len(low_stocks)} stocks bas.")
+            return low_stocks
+        except Exception as e:
+            logger.error(f"Erreur SQLAlchemy listage stock bas (< {threshold}): {e}", exc_info=True)
+            raise

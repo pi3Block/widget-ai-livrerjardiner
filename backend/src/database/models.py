@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func # Pour CURRENT_TIMESTAMP
 
 # Import de la Base déclarative depuis database.py (même dossier)
-from src.core.database import Base 
+from ..core.database import Base
 
 # ======================================================
 # Models SQLAlchemy (Basés sur table.sql)
@@ -49,6 +49,7 @@ class ProductDB(Base):
     category_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True) # index=True basé sur idx_products_name
     base_description: Mapped[Optional[str]] = mapped_column(Text)
+    slug: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True) # Ajout du champ slug
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

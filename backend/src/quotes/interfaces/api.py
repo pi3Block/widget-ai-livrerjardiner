@@ -80,6 +80,7 @@ async def read_quote(
 # Pour garder la logique métier proche, on le met ici en filtrant sur l'utilisateur courant.
 @quote_router.get("/", response_model=List[QuoteResponse]) # Changé de /users/me/quotes à /
 async def list_my_quotes(
+    response: Response, # Ajout du paramètre Response
     quote_service: QuoteServiceDep,
     current_user: CurrentUserDep,
     limit: int = Query(20, ge=1, le=200, description="Nombre max de devis à retourner"),
@@ -88,11 +89,11 @@ async def list_my_quotes(
     """Liste les devis de l'utilisateur authentifié."""
     logger.info(f"API list_my_quotes pour user ID: {current_user.id}, limit={limit}, offset={offset}")
     try:
-        # Le service list_user_quotes ne retourne pas le total pour l'instant
-        quotes, _ = await quote_service.list_user_quotes(user_id=current_user.id, limit=limit, offset=offset)
-        # Ajouter le header Content-Range si on avait le total
-        # total = await quote_service.count_user_quotes(current_user.id)
-        # response.headers["Content-Range"] = f"quotes {offset}-{offset + len(quotes) -1}/{total}"
+        # Le service doit pouvoir retourner le total maintenant
+        quotes, total_count = await quote_service.list_user_quotes(user_id=current_user.id, limit=limit, offset=offset)
+        # Ajouter le header Content-Range
+        end_range = offset + len(quotes) - 1 if quotes else offset
+        response.headers["Content-Range"] = f"quotes {offset}-{end_range}/{total_count}"
         return quotes
     except Exception as e:
         logger.error(f"Erreur API list_my_quotes pour user {current_user.id}: {e}", exc_info=True)

@@ -17,7 +17,7 @@ SMTP_PORT_STR = os.getenv("SMTP_PORT", "465")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "livrerjardiner")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "monuser")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD") # Pas de défaut
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost") # Ajouter si différent de localhost
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "192.168.1.13") # Ajouter si différent de localhost
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")     # Ajouter si différent de 5432
 
 # Option pour afficher les logs SQL (True/False), défaut False
@@ -52,11 +52,6 @@ try:
     SMTP_PORT = int(SMTP_PORT_STR)
 except (ValueError, TypeError):
     logger.warning(f"Impossible de convertir SMTP_PORT ('{SMTP_PORT_STR}') en entier. Utilisation de la valeur par défaut {SMTP_PORT}.")
-
-# Log de la configuration chargée (sauf mots de passe)
-logger.info(f"Config chargée: SENDER_EMAIL={SENDER_EMAIL}, SMTP_HOST={SMTP_HOST}, SMTP_PORT={SMTP_PORT}")
-logger.info(f"Config chargée: POSTGRES_DB={POSTGRES_DB}, POSTGRES_USER={POSTGRES_USER}")
-logger.info(f"Config LLM: META_MODEL_NAME={META_MODEL_NAME}, OLLAMA_BASE_URL={OLLAMA_BASE_URL}")
 
 # Configuration Ollama (si nécessaire de spécifier l'URL)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

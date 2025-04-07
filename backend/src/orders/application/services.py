@@ -64,12 +64,12 @@ class OrderService:
         return OrderResponse.model_validate(order_entity)
 
     async def list_user_orders(self, user_id: int, limit: int, offset: int) -> Tuple[List[OrderResponse], int]:
-        """Liste les commandes pour un utilisateur spécifique."""
+        """Liste les commandes pour un utilisateur spécifique et retourne le compte total."""
         logger.debug(f"[OrderService] Listage commandes pour user ID: {user_id}, limit: {limit}, offset: {offset}")
         order_entities = await self.order_repo.list_for_user(user_id, limit, offset)
-        # !! TODO: Améliorer le comptage pour la pagination (via repo) !!
-        total_count = len(order_entities)
-        logger.warning("[OrderService] Le comptage total des commandes pour la pagination est approximatif.")
+        
+        # Obtenir le compte total via une méthode dédiée du repository
+        total_count = await self.order_repo.count_for_user(user_id)
         
         order_responses = [OrderResponse.model_validate(o) for o in order_entities]
         return order_responses, total_count

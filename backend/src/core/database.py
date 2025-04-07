@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 # Charger les variables d'environnement depuis .env
 load_dotenv()
 
+# --- DEBUG: Afficher les composants avant de construire l'URL ------
+
 # Récupérer l'URL de la base de données en utilisant les variables de config
 DATABASE_URL = (
     f"postgresql+asyncpg://{config.POSTGRES_USER}:{config.POSTGRES_PASSWORD}@"

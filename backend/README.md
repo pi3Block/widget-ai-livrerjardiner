@@ -16,46 +16,62 @@ Le backend fournit une API RESTful pour gérer les aspects suivants de l'applica
 
 ## Technologies Utilisées
 
-- **Framework**: FastAPI
-- **Serveur ASGI**: Uvicorn
-- **Base de Données**: PostgreSQL
-- **Driver DB**: psycopg2 / psycopg2-binary
-- **Validation de Données**: Pydantic v2
-- **Authentification**: JWT (python-jose[cryptography])
-- **Hachage de Mot de Passe**: Passlib[bcrypt]
-- **Interaction LLM**: Langchain, Langchain-Ollama
-- **Configuration**: python-dotenv
+- **Framework**: [FastAPI](https://fastapi.tiangolo.com/)
+- **Serveur ASGI**: [Uvicorn](https://www.uvicorn.org/)
+- **Base de Données**: [PostgreSQL](https://www.postgresql.org/docs/)
+- **ORM**: [SQLAlchemy](https://docs.sqlalchemy.org/en/20/) (utilisé en mode asynchrone)
+- **Driver DB**: [psycopg2](https://www.psycopg.org/docs/) / psycopg2-binary (utilisé par SQLAlchemy)
+- **Validation de Données**: [Pydantic v2](https://docs.pydantic.dev/)
+- **Authentification**: JWT ([python-jose[cryptography]](https://python-jose.readthedocs.io/en/latest/))
+- **Hachage de Mot de Passe**: [Passlib[bcrypt]](https://passlib.readthedocs.io/en/stable/)
+- **Interaction LLM**: [Langchain](https://python.langchain.com/), [Langchain-Ollama](https://python.langchain.com/docs/integrations/llms/ollama)
+- **Opérations CRUD**: [FastCRUD](https://igorbenav.github.io/fastcrud/) (*Note: Non détecté dans les imports scannés*)
+- **Configuration**: [python-dotenv](https://github.com/theskumar/python-dotenv)
 
 ## Structure du Projet (backend/)
 
 ```
 backend/
+├── src/
+│   ├── addresses/      # Module de gestion des adresses
+│   ├── core/           # Configuration de base, sécurité, etc.
+│   ├── database/       # Connexion et modèles ORM (si séparés)
+│   ├── email/          # Logique d'envoi d'emails
+│   ├── general_crud/   # (Vérifier utilité/renommer) Fonctions CRUD génériques ?
+│   ├── llm/            # Intégration LLM (Ollama, Langchain)
+│   ├── orders/         # Module de gestion des commandes
+│   ├── pdf/            # Génération de PDF
+│   ├── products/       # Module de gestion des produits, catégories, stock
+│   ├── quotes/         # Module de gestion des devis
+│   ├── users/          # Module de gestion des utilisateurs et authentification
+│   └── main.py         # Point d'entrée FastAPI, routage principal
 ├── SQL/
-│   └── table.sql           # Schéma SQL de la base de données (V3)
-├── auth.py                 # Logique d'authentification JWT, dépendances FastAPI
-├── config.py               # Chargement et gestion de la configuration (via .env)
-├── crud.py                 # Fonctions d'accès et de modification de la base de données (CRUD)
-├── llm_logic.py            # Logique et prompts pour l'interaction avec les LLMs (Ollama)
-├── main.py                 # Point d'entrée de l'application FastAPI, définition des endpoints API
-├── models.py               # Modèles Pydantic pour la validation des données et les réponses API
-├── pdf_utils.py            # Utilitaires pour la génération de PDF (ex: devis)
-├── services.py             # Services externes (ex: envoi d'email)
-├── utils.py                # Fonctions utilitaires diverses
-├── .env                    # Fichier (à créer) pour les variables d'environnement (secrets)
-├── README.md               # Ce fichier
-├── ROADMAP.md              # Feuille de route du développement
-└── requirements.txt        # Fichier (à créer/gérer) listant les dépendances Python
+│   └── table.sql       # Schéma SQL de la base de données (V3)
+├── static/             # Fichiers statiques (si nécessaire)
+├── .venv/              # Environnement virtuel Python (non versionné)
+├── .env                # Fichier (à créer) pour les variables d'environnement (non versionné)
+├── README.md           # Ce fichier
+├── ROADMAP.md          # Feuille de route du développement
+└── requirements.txt    # Dépendances Python
 ```
 
 ## Base de Données
 
 Le backend utilise une base de données PostgreSQL. Le schéma actuel (V3) est défini dans `SQL/table.sql` et inclut des tables pour :
 
-- `users`, `addresses`
-- `categories`, `tags`, `products`, `product_variants`, `product_variant_tags`
-- `stock`, `stock_movements`
-- `quotes`, `quote_items`
-- `orders`, `order_items`
+- `users`: Informations utilisateur et credentials.
+- `addresses`: Adresses de livraison et facturation associées aux utilisateurs.
+- `categories`: Catégories de produits (potentiellement hiérarchiques).
+- `products`: Informations générales sur les produits.
+- `product_variants`: Variations spécifiques d'un produit (taille, couleur, SKU, prix).
+- `tags`: Tags applicables aux variations de produits.
+- `product_variant_tags`: Table de liaison Many-to-Many entre variations et tags.
+- `stock`: Quantité en stock pour chaque variation de produit.
+- `orders`: En-tête des commandes clients.
+- `order_items`: Lignes de détail des commandes.
+- `stock_movements`: Historique des entrées/sorties de stock.
+- `quotes`: En-tête des devis.
+- `quote_items`: Lignes de détail des devis.
 
 ## Authentification
 
@@ -109,21 +125,22 @@ Créez un fichier `.env` basé sur les besoins (voir `config.py`) et définissez
 
 ## Endpoints API
 
-L'API expose plusieurs endpoints pour gérer les différentes ressources. Pour une documentation interactive complète et la possibilité de tester les endpoints directement, accédez à l'interface Swagger UI générée par FastAPI :
+L'API expose plusieurs endpoints organisés par ressource pour gérer les différentes fonctionnalités de l'application. Pour une documentation interactive complète et à jour, incluant les détails des paramètres, des corps de requête et des réponses, ainsi que la possibilité de tester les endpoints directement, accédez à l'interface Swagger UI générée automatiquement par FastAPI :
 
 **`/docs`** (ex: `http://localhost:8000/docs`)
 
-Principaux groupes d'endpoints disponibles :
+Voici un aperçu des principaux groupes d'endpoints basés sur les routeurs inclus :
 
-- `/auth/token` : Connexion utilisateur.
-- `/users/` : Enregistrement utilisateur.
-- `/users/me` : Informations sur l'utilisateur connecté.
-- `/users/me/addresses` : Gestion des adresses de l'utilisateur.
-- `/products/` : Listage et filtrage des produits/variations.
-- `/categories/` : Listage des catégories.
-- `/quotes/` : Gestion des devis.
-- `/orders/` : Gestion des commandes.
-- `/chat` : Interaction avec l'assistant IA.
+- **`/auth`**: Authentification et gestion des tokens.
+- **`/users`**: Enregistrement et gestion des informations utilisateur (dont `/users/me`).
+- **`/addresses`**: Gestion des adresses pour l'utilisateur connecté.
+- **`/products`**: Gestion des produits et de leurs variations.
+- **`/categories`**: Gestion des catégories de produits.
+- **`/tags`**: Gestion des tags associés aux produits.
+- **`/stock`**: Consultation et gestion du stock des variations de produits.
+- **`/quotes`**: Gestion des devis (création, consultation, mise à jour statut).
+- **`/orders`**: Gestion des commandes (création, consultation, mise à jour statut).
+- **`/llm`**: Interaction avec l'assistant IA (ex: `/llm/chat`).
 
 **Note pour l'intégration React Admin (simpleRestProvider):** Les endpoints qui retournent des listes de ressources utilisées par React Admin (ex: `GET /products`, `GET /categories`) **doivent** inclure l'en-tête `Content-Range` dans leur réponse pour la pagination. Cet en-tête doit aussi être exposé via CORS (`expose_headers=["Content-Range"]`). Cela a été corrigé pour `/products` et `/categories`. Si `/quotes` ou `/orders` sont ajoutés comme ressources React Admin, leurs endpoints respectifs devront également être adaptés.
 

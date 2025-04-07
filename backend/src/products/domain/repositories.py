@@ -1,26 +1,29 @@
+from typing import List, Optional, Tuple, Dict, Any
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any, Tuple
+import sys
+from pathlib import Path
 
-from .entities import Category, Tag, Product, ProductVariant, Stock
-from .exceptions import ProductNotFoundException, CategoryNotFoundException, VariantNotFoundException, DuplicateSKUException
-
-# Interfaces Abstraites pour les Repositories
-# Elles définissent le contrat que les implémentations concrètes (ex: SQLAlchemy) devront respecter.
+# Importer les entités nécessaires (chemin absolu depuis backend/)
+sys.path.append(str(Path(__file__).resolve().parents[2])) # Ajouter temporairement la racine du projet backend à sys.path
+from src.products.domain.entities import Category, Tag, Product, ProductVariant, Stock
+# Importer les exceptions (chemin absolu depuis backend/)
+from src.products.domain.exceptions import ProductNotFoundException, CategoryNotFoundException, VariantNotFoundException, DuplicateSKUException
 
 class AbstractCategoryRepository(ABC):
     """Interface pour le repository des Catégories."""
     @abstractmethod
-    async def get_by_id(self, category_id: int) -> Optional[Category]:
+    async def get(self, category_id: int) -> Optional[Category]:
         raise NotImplementedError
 
     @abstractmethod
-    async def list_all(self, limit: int = 100, offset: int = 0) -> List[Category]:
+    async def list(self, limit: int, offset: int, sort_by: Optional[str], sort_desc: bool, filters: Optional[Dict[str, Any]]) -> Tuple[List[Category], int]:
+        """Liste les catégories avec pagination, tri, filtres et compte total."""
         raise NotImplementedError
 
     @abstractmethod
     async def add(self, category_data: Dict[str, Any]) -> Category:
         raise NotImplementedError
-    
+
     @abstractmethod
     async def update(self, category_id: int, update_data: Dict[str, Any]) -> Optional[Category]:
         raise NotImplementedError

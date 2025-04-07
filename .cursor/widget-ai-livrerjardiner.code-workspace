@@ -1,7 +1,22 @@
 {
 	"folders": [
 		{
+			"name": "Frontend (React)",
+			"path": "../frontend"
+		},
+		{
+			"name": "Backend (Python)",
+			"path": "../backend"
+		},
+		{
+			"path": "../.docs"
+		},
+		{
 			"path": ".."
+		},
+		{
+			"path": "."
 		}
-	]
+	],
+	"settings": {}
 }

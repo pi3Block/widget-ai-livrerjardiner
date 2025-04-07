@@ -15,7 +15,7 @@ import {
 } from 'react-admin';
 
 // URL de l'API pour l'enregistrement
-const API_URL = 'https://api.livrerjardiner.fr'; 
+const API_URL = import.meta.env.VITE_API_URL; 
 
 // Validateur pour vérifier que les mots de passe correspondent
 const validatePasswordMatch = (value: string, allValues: any) => {

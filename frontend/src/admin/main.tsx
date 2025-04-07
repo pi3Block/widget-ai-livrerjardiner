@@ -18,7 +18,8 @@ import { authProvider } from './authProvider';
 import CustomLoginPage from './pages/CustomLoginPage';
 import RegisterPage from './pages/RegisterPage';
 
-const API_URL = 'https://api.livrerjardiner.fr'; 
+// const API_URL = 'https://api.livrerjardiner.fr'; 
+const API_URL = import.meta.env.VITE_API_URL;
 
 // Créer un httpClient personnalisé qui ajoute le token
 // Utiliser le type Options importé de react-admin

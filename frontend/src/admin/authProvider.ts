@@ -1,7 +1,7 @@
 import { AuthProvider } from 'react-admin';
 
-// URL de base de votre API
-const API_URL = 'https://api.livrerjardiner.fr'; 
+// Supprimer la définition globale
+// const API_URL = import.meta.env.VITE_API_URL;
 
 export const authProvider: AuthProvider = {
     // Méthode appelée lors du clic sur le bouton de connexion
@@ -12,7 +12,7 @@ export const authProvider: AuthProvider = {
         formData.append('username', username); // FastAPI OAuth2PasswordRequestForm attend 'username'
         formData.append('password', password);
 
-        const request = new Request(`${API_URL}/auth/token`, {
+        const request = new Request(`${import.meta.env.VITE_API_URL}/auth/token`, {
             method: 'POST',
             body: formData, // Envoyer l'objet URLSearchParams directement
             headers: new Headers({ 'Content-Type': 'application/x-www-form-urlencoded' }), // Spécifier le bon Content-Type
@@ -71,7 +71,7 @@ export const authProvider: AuthProvider = {
             return Promise.reject();
         }
 
-        const request = new Request(`${API_URL}/users/me`, {
+        const request = new Request(`${import.meta.env.VITE_API_URL}/users/me`, {
             method: 'GET',
             headers: new Headers({ 'Authorization': `Bearer ${token}` }),
         });
