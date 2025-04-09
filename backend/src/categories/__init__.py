@@ -1,0 +1,1 @@
+# Ce fichier rend le dossier 'categories' un package Python 

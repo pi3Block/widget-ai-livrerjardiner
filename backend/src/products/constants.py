@@ -1,0 +1,1 @@
+# Constants specific to the products module 

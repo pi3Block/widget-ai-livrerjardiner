@@ -1,0 +1,143 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Règles d'Architecture et Bonnes Pratiques - Backend (Python/FastAPI)
+
+Ce document recense les règles, conventions et bonnes pratiques adoptées pour le développement du backend de l'application LivrerJardiner. Il a pour but d'assurer la cohérence, la maintenabilité et la robustesse du code, et d'éviter la répétition d'erreurs passées.
+
+## Principes Généraux
+
+1.  **Langue :** Le code source est en **anglais**. Les commentaires, la documentation (docstrings, README, ce fichier) sont en **français**.
+2.  **Cohérence :** Suivre les conventions de nommage (variables, fonctions, classes, fichiers) et le style de code (PEP 8, auto-formatage avec Black/Ruff recommandé).
+3.  **Modularité :** Découpler les composants autant que possible. Privilégier les petites fonctions/méthodes avec une seule responsabilité.
+4.  **DRY (Don't Repeat Yourself) :** Éviter la duplication de code. Utiliser des fonctions utilitaires, des classes de base, ou des décorateurs si pertinent.
+5.  **KISS (Keep It Simple, Stupid) :** Privilégier les solutions simples et lisibles tant qu'elles répondent au besoin.
+
+## Structure du Projet et Couches
+
+1.  **Architecture en Couches :** Respecter la séparation claire des responsabilités :
+    *   `interfaces/api.py` : Couche API (endpoints FastAPI, gestion requêtes/réponses HTTP). Dépend de la couche Service.
+    *   `application/services.py` : Couche Service (logique métier, orchestration). Dépend de la couche Repository et Domain (Exceptions). Utilise les schémas Pydantic d'application.
+    *   `application/schemas.py` : Schémas Pydantic pour la validation et la sérialisation des données entre les couches API et Service.
+    *   `domain/repositories.py` : Interfaces (classes abstraites) des Repositories. Définit le contrat pour l'accès aux données.
+    *   `domain/entities.py` : Entités du domaine (classes Pydantic ou dataclasses représentant les objets métier centraux). Peuvent contenir de la logique métier simple et des validations.
+    *   `domain/exceptions.py` : Exceptions personnalisées spécifiques au domaine métier.
+    *   `infrastructure/persistence.py` : Implémentation concrète des Repositories (ex: `SQLAlchemyCategoryRepository`). Dépend des modèles de base de données et de SQLAlchemy.
+    *   `database/models.py` : Modèles SQLAlchemy (classes mappées aux tables de la base de données).
+    *   `core/` : Configuration, dépendances globales, utilitaires transverses.
+2.  **Dépendances entre Couches :** Les dépendances doivent aller dans un seul sens : `API -> Service -> Repository -> Modèles DB`. Le domaine (`entities`, `repositories` interfaces, `exceptions`) peut être utilisé par les couches supérieures. L'infrastructure dépend du domaine et des outils externes (SQLAlchemy).
+3.  **Injection de Dépendances (FastAPI) :** Utiliser l'injection de dépendances de FastAPI (`Depends`) pour fournir les instances de Services et Repositories (et la session DB) aux couches qui en ont besoin.
+
+## Couche API (FastAPI - `interfaces/api.py`)
+
+1.  **Endpoints Clairs :** Nommer les endpoints et les fonctions associées de manière explicite et cohérente (ex: `read_products`, `create_category`). Utiliser les méthodes HTTP appropriées (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
+2.  **Validation Automatique :** Utiliser les schémas Pydantic définis dans `application/schemas.py` pour valider les corps de requête (`Body(...)`) et les paramètres de chemin/query (`Path(...)`, `Query(...)`).
+3.  **Réponses Structurées :** Utiliser `response_model` dans les décorateurs d'endpoints pour garantir la structure et la sérialisation de la réponse, en utilisant les schémas Pydantic appropriés.
+4.  **Gestion Erreurs HTTP :** Lever `HTTPException` pour les erreurs liées au protocole HTTP (404 Not Found, 400 Bad Request, 401 Unauthorized, 403 Forbidden, 422 Unprocessable Entity). Utiliser des codes de statut précis. Voir la section [Error Handling](mdc:Frontend (React)/#error-handling).
+5.  **Dépendance aux Services :** Les endpoints API doivent déléguer la logique métier aux méthodes de la couche Service via injection de dépendances. Ils ne doivent *pas* contenir de logique métier complexe ni accéder directement aux repositories ou à la base de données.
+6.  **`Content-Range` Header:** Pour les endpoints retournant des listes paginées et destinés à des clients comme React Admin, **toujours** inclure l'en-tête `Content-Range` dans la réponse. Format: `items start-end/total`. Nécessite que le service retourne le nombre total d'éléments.
+    *   Exemple: `headers["Content-Range"] = f"items {offset}-{offset + len(items) - 1}/{total_count}"`
+7.  **Async/Await :** Déclarer les fonctions d'endpoint avec `async def` et utiliser `await` lors de l'appel aux méthodes asynchrones des services.
+
+## Couche Service (Application Logic - `application/services.py`)
+
+1.  **Logique Métier :** Contient la logique applicative principale, l'orchestration des appels aux repositories, et la transformation des données si nécessaire.
+2.  **Dépendance aux Repositories :** Interagit avec la base de données *exclusivement* via les interfaces des repositories (injectées via `__init__`).
+3.  **Utilisation des Schémas :** Accepte des schémas Pydantic (ex: `CategoryCreate`, `CategoryUpdateSchema`) en entrée et retourne des schémas Pydantic de réponse (ex: `CategoryResponse`, `PaginatedProductResponse`) ou des entités du domaine si approprié pour une logique interne.
+4.  **Contrat Clair :** S'assurer que toutes les méthodes appelées par la couche API existent et ont la signature attendue (paramètres, types de retour). *Leçon Apprise : Des `AttributeError` sont survenus car des méthodes comme `get_category`, `update_category` manquaient.*
+5.  **Gestion des Retours de Liste :** Les méthodes listant des entités (`list_...`) **doivent** retourner à la fois la liste des éléments *et* le nombre total d'éléments (`Tuple[List[EntityType], int]`) pour permettre la pagination et le `Content-Range` dans l'API.
+6.  **Gestion d'Erreurs Domaine/Application :** Capturer les exceptions spécifiques venant des repositories (ex: `EntityNotFound`) et soit les gérer, soit les encapsuler dans des exceptions d'application plus générales (définies dans `domain/exceptions.py`), soit les laisser remonter pour être traitées par la couche API.
+7.  **Imports Corrects :** S'assurer que tous les types (Schémas, Exceptions, Entités) utilisés sont correctement importés. *Leçon Apprise : `NameError` pour `CategoryUpdateSchema` non importé.*
+8.  **Async/Await :** Utiliser `async def` pour les méthodes effectuant des opérations I/O (appels aux repositories) et `await` lors de ces appels.
+
+## Couche Repository (Persistence - `infrastructure/persistence.py` & `domain/repositories.py`)
+
+1.  **Interface Abstraite (`domain/repositories.py`) :** Définir une classe de base abstraite (`ABC`) pour chaque repository (ex: `AbstractCategoryRepository`) définissant les méthodes CRUD et spécifiques nécessaires (ex: `get_by_id`, `list`, `add`, `update`, `delete`, `count_for_user`, `get_by_slug`). Utiliser les entités du domaine (`Category`) et/ou des dictionnaires simples pour les types de retour et paramètres.
+2.  **Implémentation Concrète (`infrastructure/persistence.py`) :** Implémenter l'interface abstraite en utilisant SQLAlchemy (`SQLAlchemyCategoryRepository`).
+3.  **Dépendance à la Session :** Recevoir l'`AsyncSession` SQLAlchemy via `__init__`.
+4.  **Mapping Entité/Modèle DB :** Les méthodes du repository sont responsables de la conversion entre les modèles DB SQLAlchemy (`CategoryDB`) et les entités du domaine (`Category`) ou les schémas Pydantic si l'interface le demande. Utiliser `Entity.model_validate(db_model)` et `db_model(**entity.model_dump())`.
+5.  **Requêtes Explicites :** Utiliser l'API Core/ORM de SQLAlchemy (`select()`, `update()`, `delete()`, `func.count()`, etc.) pour construire les requêtes SQL. Éviter le SQL brut sauf si absolument nécessaire et justifié.
+6.  **Sélection de Colonnes :** S'assurer que les requêtes `select()` incluent **toutes** les colonnes nécessaires pour construire l'entité ou le schéma Pydantic attendu. *Leçon Apprise : L'oubli de `slug` dans le `select()` de `list_all` pour les produits a causé une `ValidationError`.* Préférer `select(ModelDB)` plutôt que lister les colonnes individuellement si toutes sont nécessaires.
+7.  **Gestion du `total_count` :** Pour les méthodes `list`, exécuter une requête `count()` séparée **avant** d'appliquer `limit()` et `offset()` pour obtenir le nombre total d'enregistrements correspondant aux filtres.
+8.  **Implémentation Complète :** S'assurer que **toutes** les méthodes définies dans l'interface abstraite sont implémentées dans la classe concrète. *Leçon Apprise : `AttributeError` car `get_by_id` et `update` manquaient dans `SQLAlchemyCategoryRepository`.*
+9.  **Gestion des Erreurs DB :** Capturer les exceptions SQLAlchemy (`IntegrityError` pour les violations de contraintes, `NoResultFound` si pertinent, etc.) et les traduire en exceptions de domaine (`DuplicateEntryError`, `EntityNotFound`) ou retourner `None` / `False` selon le contrat de l'interface. Ne pas laisser fuir les exceptions SQLAlchemy brutes au-delà du repository.
+10. **Transactions :** Les opérations `add`, `update`, `delete` doivent généralement être suivies d'un `await self.session.flush()` pour envoyer les commandes à la DB et potentiellement déclencher des erreurs d'intégrité tôt. Le `commit` ou `rollback` final est géré par le middleware ou le décorateur qui injecte la session dans la couche API/Service.
+11. **Async/Await :** Toutes les méthodes interagissant avec la base de données (`session.execute`, `session.flush`, etc.) doivent être `async def` et utiliser `await`.
+
+## Base de Données & Modèles (SQLAlchemy Models - `database/models.py`)
+
+1.  **Modèles SQLAlchemy :** Définir les classes mappées aux tables (`CategoryDB`, `ProductDB`, etc.) héritant d'une base déclarative (`Base`). Utiliser les types SQLAlchemy (`String`, `Integer`, `Boolean`, `DateTime`, `Numeric`, etc.).
+2.  **Synchro Modèle/DB :** Le modèle SQLAlchemy **doit** correspondre exactement à la structure de la table en base de données (noms de colonnes, types, contraintes). *Leçon Apprise : L'erreur `slug` a persisté jusqu'à ce que le champ soit ajouté à la fois via `ALTER TABLE` ET dans la classe `ProductDB`.*
+3.  **Migrations (Alembic) :** **Utiliser Alembic** pour gérer les modifications de schéma de base de données. Générer des fichiers de migration (`alembic revision --autogenerate`) après avoir modifié les modèles SQLAlchemy et les appliquer (`alembic upgrade head`). **Éviter** les `ALTER TABLE` manuels qui désynchronisent les modèles et la base.
+4.  **Contraintes :** Définir les contraintes (`primary_key=True`, `ForeignKey`, `nullable=False`, `unique=True`) directement dans les modèles.
+5.  **Index :** Ajouter `index=True` aux colonnes fréquemment utilisées dans les clauses `WHERE`, `JOIN`, ou `ORDER BY` pour améliorer les performances (ex: clés étrangères, `slug`, colonnes de statut).
+6.  **Relations :** Définir les relations (`relationship()`) avec `back_populates` pour assurer la cohérence bidirectionnelle. Configurer le chargement (`lazy='selectinload'` ou `lazy='joined'`) si nécessaire, mais souvent géré par les requêtes explicites dans le repository.
+7.  **Timestamps :** Utiliser `default=func.now()` pour `created_at` et `onupdate=func.now()` pour `updated_at` sur les colonnes `DateTime`.
+
+## Schémas (Pydantic - `application/schemas.py`)
+
+1.  **Séparation des Schémas :** Définir des schémas distincts pour différentes opérations :
+    *   `...Base` : Champs communs.
+    *   `...Create` : Champs requis pour la création (hérite souvent de `Base`).
+    *   `...Update` : Champs *optionnels* pour la mise à jour (hérite souvent de `Base` ou `BaseModel`, tous les champs `Optional[...]`).
+    *   `...Response` ou `...` (Nom de l'entité) : Champs retournés par l'API (hérite souvent de `Base`, ajoute `id`, timestamps, relations).
+2.  **Validation :** Utiliser les validateurs Pydantic (`@validator`, `Field(...)`) pour la validation de bas niveau (longueur, format, plages de valeurs). La validation métier complexe appartient à la couche Service ou Domaine.
+3.  **ORM Mode :** Configurer `model_config = ConfigDict(from_attributes=True)` sur les schémas destinés à être créés à partir de modèles SQLAlchemy.
+4.  **Références Forward :** Pour les relations typées dans les schémas Pydantic où le type référencé est défini plus loin ou crée une dépendance circulaire, utiliser une chaîne de caractères (ex: `products: List['Product']`). *Leçon Apprise : `NameError` pour `Product` dans `Category`.*
+5.  **Définitions Complètes :** S'assurer que tous les schémas utilisés comme types dans les signatures de fonctions (API, Service) ou dans d'autres schémas sont bien définis. *Leçon Apprise : `ImportError` car `CategoryUpdateSchema` était utilisé mais non défini.*
+
+## Error Handling
+
+1.  **Exceptions Personnalisées :** Définir des exceptions claires et spécifiques dans `domain/exceptions.py` pour les erreurs métier (ex: `ProductNotFoundException`, `CategoryInUseError`, `InsufficientStockError`, `DuplicateSlugError`).
+2.  **Traduction d'Exceptions :**
+    *   Les **Repositories** capturent les exceptions bas niveau (DB, SQLAlchemy) et les traduisent en exceptions de domaine.
+    *   Les **Services** capturent les exceptions de domaine des repositories et peuvent les gérer ou les laisser remonter. Ils peuvent aussi lever leurs propres exceptions d'application.
+    *   La **Couche API** (ou un middleware/gestionnaire d'exceptions FastAPI) capture les exceptions de domaine/application et les traduit en `HTTPException` avec le code de statut et le message appropriés pour le client.
+3.  **Messages d'Erreur Clairs :** Les messages d'erreur retournés au client (via `HTTPException(detail=...)`) doivent être informatifs mais **ne pas exposer** de détails d'implémentation sensibles (stack traces, queries SQL). Loguer les détails complets côté serveur.
+4.  **Format d'Erreur Standardisé (Optionnel mais recommandé) :** Envisager d'adopter un format de réponse d'erreur standard comme RFC 7807 / RFC 9457 (Problem Details) pour toutes les erreurs API (4xx, 5xx). Cela peut être implémenté avec des gestionnaires d'exceptions personnalisés dans FastAPI. ([Référence Zuplo](mdc:Frontend (React)/https:/zuplo.com/blog/2025/02/11/best-practices-for-api-error-handling))
+5.  **Logging :** Loguer **toutes** les erreurs (y compris les `HTTPException` 4xx si pertinent) avec un niveau approprié (`ERROR`, `WARNING`, `INFO`) et un contexte suffisant (ID de l'utilisateur, données de la requête, stack trace pour les 5xx) pour faciliter le débogage.
+
+## Tests
+
+1.  **Couverture :** Viser une bonne couverture de tests, en particulier pour la couche Service (logique métier) et la couche Repository (interactions DB simulées ou réelles).
+2.  **Tests d'Intégration :** Tester les flux complets depuis l'API jusqu'à la base de données (en utilisant une base de données de test) pour vérifier l'interaction correcte des couches. Utiliser le `TestClient` de FastAPI.
+3.  **Tests Unitaires :** Tester la logique isolée dans les services en mockant les dépendances (repositories). Tester les méthodes complexes des repositories en mockant la session DB ou en utilisant une DB en mémoire (SQLite).
+
+## Dépendances & Environnement
+
+1.  **Gestionnaire de Paquets :** Utiliser `pip` avec `requirements.txt` (ou `poetry`, `pdm` avec `pyproject.toml`) pour gérer les dépendances. Fixer les versions pour la reproductibilité.
+2.  **Environnement Virtuel :** **Toujours** utiliser un environnement virtuel (`.venv`, `venv`, `conda`) pour isoler les dépendances du projet.
+3.  **Variables d'Environnement :** Utiliser un fichier `.env` (ignoré par Git) pour les configurations sensibles (secrets DB, clés API) et Pydantic-Settings (ou `python-dotenv`) pour les charger. Ne **jamais** commiter de secrets dans le code.
+
+## Version Control (Git)
+
+1.  **`.gitignore` :** Maintenir un fichier `.gitignore` complet incluant au minimum :
+    *   Environnements virtuels (`.venv/`, `venv/`)
+    *   Fichiers de cache Python (`**/__pycache__/`, `*.pyc`)
+    *   Fichiers de configuration locaux/secrets (`.env`, `*.local`)
+    *   Bases de données locales (ex: `*.db`, `*.sqlite3`)
+    *   Rapports de tests/couverture (`htmlcov/`, `.coverage`)
+    *   Dépendances IDE (`.idea/`, `.vscode/` - sauf fichiers partagés comme `settings.json` si convenu)
+2.  **Commits Atomiques :** Faire des commits petits et logiques, avec des messages clairs expliquant le *quoi* et le *pourquoi*.
+3.  **Branches :** Utiliser des branches pour développer de nouvelles fonctionnalités ou corriger des bugs (`feature/...`, `fix/...`).
+
+## Documentation
+
+1.  **README.md :** Maintenir un `README.md` à jour expliquant l'objectif du projet, comment l'installer, le configurer, le lancer et le tester. Inclure des liens vers les documentations externes pertinentes (FastAPI, SQLAlchemy, etc.).
+2.  **Docstrings :** Écrire des docstrings claires (en français) pour les modules, classes et fonctions/méthodes publiques, expliquant leur rôle, leurs paramètres et ce qu'elles retournent.
+3.  **Architecture :** Maintenir ce fichier `architecture-rules.md` à jour au fur et à mesure de l'évolution du projet et des leçons apprises.
+
+11. **Async/Await :** Toutes les méthodes interagissant avec la base de données (`session.execute`, `session.flush`, etc.) doivent être `async def` et utiliser `await`.
+
+12. **Utilisation de FastCRUD (Directive Clé) :**
+    *   **Principe :** Utiliser **FastCRUD** comme solution **par défaut** pour implémenter les opérations CRUD standard sur les modèles. L'objectif est de réduire le code répétitif et de bénéficier des fonctionnalités intégrées (pagination, tri, filtrage de base).
+    *   **Implémentation :** Pour les entités nécessitant principalement du CRUD (ex: `Category`, `Tag`, `Address`), remplacer ou éviter de créer une classe `SQLAlchemy...Repository` manuelle. Injecter directement une instance de `FastCRUD(ModelDB)` (correctement typée avec les schémas via `FastCRUD[...]` si nécessaire) dans la couche Service.
+    *   **Adaptation des Services :** La couche Service appellera les méthodes de l'instance FastCRUD (ex: `crud.get`, `crud.get_multi`, `crud.create`, `crud.update`, `crud.delete`).
+    *   **Cas d'Exception (Repositories Manuels) :** La création d'une interface `Abstract...Repository` et d'une implémentation `SQLAlchemy...Repository` manuelle reste possible **uniquement si** une logique d'accès aux données complexe et spécifique est requise, qui ne peut **pas** être raisonnablement exprimée via les méthodes standards ou les capacités de filtrage/jointure de FastCRUD. Ce choix doit être justifié.
+    *   **Héritage/Extension (Alternative) :** Si seule quelques méthodes spécifiques sont nécessaires en plus du CRUD de base, envisager de créer une classe qui hérite de `FastCRUD(ModelDB)` et d'y ajouter/surcharger ces méthodes spécifiques, plutôt que de réimplémenter tout le CRUD.
+
+## Base de Données & Modèles (SQLAlchemy Models - `database/models.py`)
+
+1.  **Modèles SQLAlchemy :** Définir les classes mappées aux tables (`CategoryDB`, `ProductDB`, etc.) héritant d'une base déclarative (`Base`). Utiliser les types SQLAlchemy (`String`, `Integer`, `Boolean`, `DateTime`, `Numeric`, etc.). 

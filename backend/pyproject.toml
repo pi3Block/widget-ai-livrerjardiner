@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "livrerjardiner-backend" # Ou un autre nom de projet si vous préférez
+version = "0.1.0" # Version initiale
+# Ajoutez d'autres métadonnées si vous le souhaitez (auteur, description, etc.)
+# readme = "README.md" # Décommentez si vous avez un README
+
+[tool.setuptools.packages.find]
+where = ["src"] # Indique que vos paquets Python se trouvent dans le dossier 'src'

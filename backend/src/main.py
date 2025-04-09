@@ -1,61 +1,35 @@
+"""
+Module principal de l'application FastAPI LivrerJardiner.
+
+Ce module configure et initialise l'instance FastAPI, ajoute les middlewares nécessaires (CORS),
+monte les fichiers statiques, et inclut les routeurs pour les différentes fonctionnalités
+de l'API (authentification, utilisateurs, produits, commandes, etc.).
+"""
 import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+
+# --- Importer les routeurs ---
+# Utilisation d'imports relatifs standardisés pour tous les modules internes
+from src.auth.router import auth_router
+from src.users.router import user_router
+from src.addresses.router import router as address_router
+from src.llm.router import router as llm_router
+from src.products.router import product_router
+from src.categories.router import router as categories_router
+from src.product_variants.router import variant_router
+from src.tags.router import tag_router
+from src.quotes.router import quote_router
+from src.orders.router import order_router
+from src.stock.router import router as stock_router
+from src.stock_movements.router import router as stock_movement_router
 
 # Configurer le logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-from typing import Optional, List, Annotated, Any, Dict, Tuple
-from fastapi import FastAPI, HTTPException, Depends, status, Response, Body, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.concurrency import run_in_threadpool
-import json
-import random
-from pydantic import BaseModel
-from decimal import Decimal
-from fastapi.staticfiles import StaticFiles
-
-# --- Importer la configuration ---
-from .core import config
-
-# --- Importer les modèles SQLAlchemy DB ---
-from .database import models
-
-# --- Importer les Schémas Pydantic ---
-# import schemas <-- Supprimé
-
-# --- Importer les fonctions CRUD V3 --- (Fichier supprimé)
-# import crud
-
-# --- Importer logique LLM (sera adaptée plus tard) ---
-# Suppression de l'import obsolète de llm_logic
-# from llm_logic import get_llm, stock_prompt, general_chat_prompt, parsing_prompt
-
-# --- Importer le service d'envoi d'email (inchangé pour l'instant) ---
-# Suppression de l'import obsolète de services
-# import services
-# Suppression de l'import obsolète de pdf_utils
-# import pdf_utils
-
-# --- Importer les utilitaires d'authentification ---
-# Rendre l'import relatif
-from .core.security import get_current_admin_user_entity, get_current_active_user_entity, get_optional_current_active_user_entity
-# Rendre l'import relatif
-from .users.domain.user_entity import UserEntity
-
-# --- Importer la dépendance de session DB ---
-# Remplacer l'ancien import par le chemin correct
-from .core.database import get_db_session, AsyncSession
-
-# --- Importer les nouveaux routeurs ---
-# Rendre les imports relatifs
-from .users.interfaces.user_router import auth_router, user_router
-from .addresses.interfaces.address_router import address_router
-from .llm.interfaces.api import llm_router
-from .products.interfaces.api import product_router, category_router, tags_router, stock_router
-from .quotes.interfaces.api import quote_router
-from .orders.interfaces.api import order_router
-
-
 
 app = FastAPI(
     title="LivrerJardiner API",
@@ -86,83 +60,28 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ======================================================
-# Inclure les nouveaux routeurs
+# Inclure les routeurs
 # ======================================================
-app.include_router(auth_router)
-app.include_router(user_router)
-app.include_router(address_router)
-app.include_router(llm_router)
-app.include_router(product_router)
-app.include_router(category_router)
-app.include_router(tags_router)
-app.include_router(stock_router)
-app.include_router(quote_router)
-app.include_router(order_router)
+# Routeurs d'authentification et d'utilisateurs
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentification"])
+app.include_router(user_router, prefix="/api/v1/users", tags=["Utilisateurs"])
 
-# ======================================================
-# Endpoints: Adresses Utilisateur (SUPPRIMÉS)
-# ======================================================
+# Routeur d'adresses
+app.include_router(address_router, prefix="/api/v1/addresses", tags=["Addresses"])
 
-# @app.post("/users/me/addresses", ...) # Supprimé
-# async def add_user_address(...): # Supprimé
-    # ...
+# Routeurs de produits, catégories, variations, tags
+app.include_router(product_router, prefix="/api/v1/products", tags=["Produits"])
+app.include_router(categories_router, prefix="/api/v1/categories", tags=["Categories"])
+app.include_router(variant_router, prefix="/api/v1/product-variants", tags=["Product Variants"])
+app.include_router(tag_router, prefix="/api/v1/tags", tags=["Tags"])
 
-# @app.get("/users/me/addresses", ...) # Supprimé
-# async def get_my_addresses(...): # Supprimé
-    # ...
+# Routeurs de devis et commandes
+app.include_router(quote_router, prefix="/api/v1/quotes", tags=["Quotes"])
+app.include_router(order_router, prefix="/api/v1/orders", tags=["Orders"])
 
-# @app.put("/users/me/addresses/{address_id}/default", ...) # Supprimé
-# async def set_my_default_address(...): # Supprimé
-    # ...
+# Routeur LLM
+app.include_router(llm_router, prefix="/api/v1/llm", tags=["LLM"])
 
-# @app.put("/users/me/addresses/{address_id}", ...) # Supprimé
-# async def update_my_address(...): # Supprimé
-    # ...
-
-# @app.delete("/users/me/addresses/{address_id}", ...) # Supprimé
-# async def delete_my_address(...): # Supprimé
-    # ...
-
-# ======================================================
-# Endpoints: Produits, Catégories, Tags (SUPPRIMÉS)
-# ======================================================
-
-# Supprimer ici les fonctions et décorateurs pour :
-# - @app.get("/products", ...)
-# - @app.get("/products/{product_id}", ...)
-# - @app.put("/products/{product_id}", ...)
-# - parse_react_admin_params (si plus utilisé ailleurs, sinon le déplacer dans un fichier utils)
-# - @app.get("/categories", ...)
-# - @app.get("/categories/{category_id}", ...)
-# - @app.put("/categories/{category_id}", ...)
-# - @app.post("/products", ...)
-# - @app.post("/categories", ...)
-# - @app.post("/products/{product_id}/variants", ...)
-
-# ======================================================
-# Endpoints: Devis (Quotes) (SUPPRIMÉS - Migrés vers quote_router)
-# ======================================================
-
-# Le code pour @app.post("/quotes", ...), @app.get("/quotes/{quote_id}", ...),
-# @app.get("/users/me/quotes", ...), et @app.patch("/quotes/{quote_id}/status", ...)
-# est maintenant supprimé de ce fichier.
-
-# ======================================================
-# Endpoints: Commandes (Orders) (SUPPRIMÉS - Migrés vers order_router)
-# ======================================================
-
-# Les anciens endpoints @app.post("/orders", ...), @app.get("/orders/{order_id}", ...),
-# @app.get("/users/me/orders", ...), et @app.patch("/orders/{order_id}/status", ...)
-# sont maintenant supprimés de ce fichier.
-
-# ======================================================
-# Initialisation & Lancement
-# ======================================================
-
-# Note: L'ancien endpoint /products_old a été supprimé car marqué deprecated et levait une erreur.
-
-# Lancement (si exécuté directement, pour debug local)
-# if __name__ == "__main__":
-#     import uvicorn
-#     logger.info("Démarrage du serveur Uvicorn pour le développement...")
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+# Routeur de stock et mouvements
+app.include_router(stock_router, prefix="/api/v1/stock", tags=["Stock"])
+app.include_router(stock_movement_router, prefix="/api/v1/stock-movements", tags=["Stock Movements"])

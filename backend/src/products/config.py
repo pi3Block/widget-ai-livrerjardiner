@@ -1,0 +1,1 @@
+# Configuration specific to the products module 

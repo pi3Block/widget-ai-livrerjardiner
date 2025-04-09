@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Facture {{ invoice_number }}</title>
+    <link rel="stylesheet" href="invoice.css">
+</head>
+<body>
+    <div class="header">
+        <div class="company-info">
+            <h2>{{ company.name }}</h2>
+            <p>{{ company.address }}</p>
+            <p>Tél: {{ company.phone }}</p>
+            <p>Email: {{ company.email }}</p>
+            <p>SIRET: {{ company.siret }}</p>
+        </div>
+        <div class="invoice-info">
+            <h1>Facture N° {{ invoice_number }}</h1>
+            <p>Date: {{ date }}</p>
+        </div>
+    </div>
+
+    <div class="client-info">
+        <h3>Client</h3>
+        <p>{{ client.name }}</p>
+        <p>{{ client.address }}</p>
+        <p>Tél: {{ client.phone }}</p>
+        <p>Email: {{ client.email }}</p>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th>Quantité</th>
+                <th>Prix unitaire</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.description }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.unit_price }} €</td>
+                <td>{{ item.total }} €</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="total">
+        <p>Total HT: {{ total_ht }} €</p>
+        <p>TVA ({{ tva_rate }}%): {{ total_tva }} €</p>
+        <p>Total TTC: {{ total_ttc }} €</p>
+    </div>
+
+    <div class="footer">
+        <p>Merci de votre confiance!</p>
+        <p>Pour toute question, n'hésitez pas à nous contacter.</p>
+        <p>{{ company.name }} - SIRET: {{ company.siret }}</p>
+    </div>
+</body>
+</html> 
